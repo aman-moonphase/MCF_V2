@@ -3,13 +3,8 @@
 import React from 'react';
 import { WorkflowStage, Project } from '@/types/project';
 import { Bot, Edit3, FileText, ArrowRight } from 'lucide-react';
-import { ContentTypeStage } from './stages/content-type-stage';
-import { ContentSelectionStage } from './stages/content-selection-stage';
-import { PlatformStrategyStage } from './stages/platform-strategy-stage';
-import { TopicAngleStage } from './stages/topic-angle-stage';
-import { ContentStrategyStage } from './stages/content-strategy-stage';
-import { StoryboardStage } from './stages/storyboard-stage';
-import { ScriptStage } from './stages/script-stage';
+import { STAGE_COMPONENTS, hasDedicatedStageUI } from './stage-registry';
+import { getStageLabel } from '@/lib/workflow-stages';
 import { ScheduleDialog } from '@/components/schedule-dialog';
 import { Calendar } from 'lucide-react';
 import {
@@ -40,63 +35,12 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage }: Works
   };
 
   const renderStageContent = () => {
+    const StageComponent = STAGE_COMPONENTS[activeStage.type];
+    if (StageComponent) {
+      return <StageComponent project={project} activeStage={activeStage} onComplete={onAdvanceStage} />;
+    }
+
     switch (activeStage.type) {
-      case 'content-type':
-        return (
-          <ContentTypeStage 
-            project={project} 
-            activeStage={activeStage} 
-            onComplete={onAdvanceStage} 
-          />
-        );
-      case 'content-selection':
-        return (
-          <ContentSelectionStage 
-            project={project} 
-            activeStage={activeStage} 
-            onComplete={onAdvanceStage} 
-          />
-        );
-      case 'platform-strategy':
-        return (
-          <PlatformStrategyStage 
-            project={project} 
-            activeStage={activeStage} 
-            onComplete={onAdvanceStage} 
-          />
-        );
-      case 'topic-angle':
-        return (
-          <TopicAngleStage 
-            project={project} 
-            activeStage={activeStage} 
-            onComplete={onAdvanceStage} 
-          />
-        );
-      case 'content-strategy':
-        return (
-          <ContentStrategyStage 
-            project={project} 
-            activeStage={activeStage} 
-            onComplete={onAdvanceStage} 
-          />
-        );
-      case 'storyboard':
-        return (
-          <StoryboardStage 
-            project={project} 
-            activeStage={activeStage} 
-            onComplete={onAdvanceStage} 
-          />
-        );
-      case 'final-script':
-        return (
-          <ScriptStage 
-            project={project} 
-            activeStage={activeStage} 
-            onComplete={onAdvanceStage} 
-          />
-        );
       case 'source-grounding':
         return (
           <div className="space-y-6">
@@ -134,7 +78,7 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage }: Works
               <Bot className="w-12 h-12 text-muted-foreground/50 mx-auto" />
               <h3 className="text-lg font-medium text-foreground">Stage Workspace</h3>
               <p className="text-sm text-muted-foreground">
-                This area will host the interactive AI tools and generated content for the <strong>{activeStage.type.split('-').join(' ')}</strong> stage.
+                This area will host the interactive AI tools and generated content for the <strong>{getStageLabel(activeStage)}</strong> stage.
               </p>
             </div>
           </div>
@@ -152,7 +96,7 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage }: Works
             Active Stage
           </span>
           <h2 className="text-2xl font-bold tracking-tight text-foreground">
-            {activeStage.type.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+            {getStageLabel(activeStage)}
           </h2>
         </div>
         
@@ -165,7 +109,7 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage }: Works
             {activeStage.status}
           </div>
           
-          {activeStage.status !== 'Completed' && !['content-type', 'content-selection', 'platform-strategy', 'topic-angle', 'content-strategy', 'storyboard', 'final-script'].includes(activeStage.type) && (
+          {activeStage.status !== 'Completed' && !hasDedicatedStageUI(activeStage.type) && (
             <button 
               onClick={handleAdvance}
               disabled={isAdvancing}

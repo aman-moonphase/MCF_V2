@@ -1,64 +1,51 @@
+from typing import Any, Dict
+
+from ..content_types import CONTENT_TYPES
+from ..prompts import bullet_list, build_stage_prompt
+from ..providers.factory import get_configured_provider as get_provider
 from ..schemas import AIState, ContentTypeOutput
-from ..providers.factory import AIProviderFactory
-from ..config import AIConfig
-from ..prompts import GLOBAL_RELEVANCE_REQUIREMENT
+from .common import call_structured, generation_failure, retry_feedback, validation_failure
+from .common_context import source_context
 
-def get_provider():
-    from ...core.config import settings
-    config = AIConfig(
-        provider=settings.AI_PROVIDER,
-        api_key=settings.OPENAI_API_KEY,
-        model_name=settings.AI_MODEL_NAME,
-        temperature=settings.AI_TEMPERATURE
-    )
-    return AIProviderFactory.get_provider(config)
+STAGE = "content-type"
 
-async def recommend_type(state: AIState) -> AIState:
+
+async def recommend_type(state: AIState) -> Dict[str, Any]:
+    if state.get("error") and state.get("retries", 0) >= 3:
+        return {}
+
     provider = get_provider()
-    
-    prompt = f"""
-    {GLOBAL_RELEVANCE_REQUIREMENT}
-    Analyze the following source text and recommend the most suitable primary content type, along with alternatives.
-    
-    Source Text:
-    {state['input_text']}
-    
-    CRITICAL INSTRUCTION: You MUST recommend exactly ONE primary type and a few alternatives. 
-    You MUST choose ONLY from the following exact six options:
-    - Video
-    - Image
-    - Carousel
-    - Article
-    - Newsletter
-    - Social Post
-    
-    Do NOT use any other names or variations. Provide your recommendation with detailed reasoning and signals found in the source text.
-    """
-    
-    try:
-        result: ContentTypeOutput = await provider.generate_structured(prompt, ContentTypeOutput)
-        return {
-            **state,
-            "structured_output": result.model_dump(),
-            "error": None
-        }
-    except Exception as e:
-        return {
-            **state,
-            "error": str(e),
-            "retries": state.get("retries", 0) + 1
-        }
 
-async def validate_result(state: AIState) -> AIState:
+    prompt = build_stage_prompt(
+        "Content Type Recommendation",
+        source_context(state),
+        f"""
+Recommend the single most suitable primary content type for this project, plus a few alternatives.
+You MUST choose ONLY from these exact six options (no other names or variations):
+{bullet_list(CONTENT_TYPES)}
+
+Base the reasoning on signals that are actually present in the source material, and list those signals.
+{retry_feedback(state)}
+""",
+    )
+
+    try:
+        result: ContentTypeOutput = await call_structured(provider, prompt, ContentTypeOutput, state, STAGE)
+        return {"structured_output": result.model_dump(), "error": None}
+    except Exception as e:
+        return generation_failure(state, "Failed to recommend content type", e)
+
+
+async def validate_result(state: AIState) -> Dict[str, Any]:
     if state.get("error"):
         return state
-        
+
     output = state.get("structured_output")
     if not output:
-        return {**state, "error": "No output generated"}
-        
+        return validation_failure(state, "No output generated")
+
     try:
         ContentTypeOutput(**output)
         return state
     except Exception as e:
-        return {**state, "error": f"Validation failed: {str(e)}"}
+        return validation_failure(state, f"Validation failed: {str(e)}")

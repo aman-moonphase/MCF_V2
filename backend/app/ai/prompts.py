@@ -1,4 +1,18 @@
-GLOBAL_RELEVANCE_REQUIREMENT = """
+"""Prompt construction shared by every workflow stage.
+
+Every stage prompt has the same three parts, in this order:
+
+    1. SHARED_SYSTEM_RULES   — production rules that apply to every provider and stage
+    2. CURRENT PROJECT CONTEXT — data from the current project only (source, approved choices)
+    3. STAGE INSTRUCTIONS    — what this stage must produce
+
+Demo-mode behaviour is NOT described here: the DemoProvider is deterministic code, and its
+contract lives in app/ai/providers/demo_provider.py. Real providers never receive demo text.
+"""
+
+from typing import Iterable, Optional, Tuple
+
+SHARED_SYSTEM_RULES = """
 ==================================================
 GLOBAL REQUIREMENT — CONTENT RELEVANCE & CONTEXTUAL CONSISTENCY
 ==================================================
@@ -13,26 +27,52 @@ CRITICAL:
 8. RELEVANCE OVER LENGTH: Prefer relevant, useful, and specific content over long, generic, and repetitive content. Do NOT invent information simply to fill structural requirements.
 
 Before generating the final output, mentally validate that every major piece of information is relevant, anchored to the user's context, and does not contain unsupported or leaked facts.
-
-==================================================
-DEMO MODE — AVAILABLE DATA ONLY
-==================================================
-IMPORTANT:
-Currently, MCF may run without a real OpenAI/Gemini API key.
-When running in Demo Mode, the system must generate content ONLY from the data/context actually available to MCF.
-Do NOT pretend that Demo Mode has access to external knowledge, live web research, or hidden information.
-
-1. AVAILABLE DATA IS THE SOURCE OF TRUTH: Demo Mode may use user's current input, uploaded document content, ingested URL content, extracted source text, retrieved RAG chunks, approved Content Type, selected Content Opportunity, approved Platform Strategy, approved Topic & Angle, approved Content Strategy, approved Storyboard, or other data explicitly stored for the CURRENT project. Nothing else should be treated as factual source material.
-2. DO NOT INVENT MISSING INFORMATION: If the available data does not contain statistics, research findings, company information, market data, quotations, specific technical facts, dates, names, or numerical claims, DO NOT invent them. Do not fabricate realistic-looking numbers just to make the demo output appear sophisticated.
-3. GENERATE ONLY WHAT THE DATA SUPPORTS: If the source contains enough information for 5 useful slides, generate 5 useful slides. Do NOT invent information just to reach 10 slides. Relevance and factual grounding are more important than output length.
-4. CREATIVE GENERATION IS ALLOWED — BUT MUST STAY GROUNDED: Creative transformation is allowed, but Demo Mode must NOT add unsupported statistics unless that statistic actually exists in the available source/context.
-5. NO FAKE EXTERNAL KNOWLEDGE: Never generate statements such as 'According to Gartner...' or 'McKinsey reports...' unless that information is actually present in the current project's available source/context.
-6. URL PROJECTS: If ingestion/retrieval failed or no useful content is available, DO NOT silently substitute unrelated knowledge. Indicate that insufficient source content is available, or generate only from whatever current project data is actually available. NEVER use content from another project.
-7. UPLOADED DOCUMENTS: Use the extracted and retrieved document content as the factual basis. Do not add unrelated information from previous projects. Do not assume information that is not present in the document.
-8. DEMO FIXTURES: DemoProvider fixtures may provide realistic structure, but they must remain context-aware. The fixture should adapt to the current topic, source/context, approved content type, platform, topic/angle, and content strategy. The structure can be deterministic, but subject matter must be based on available project data.
-9. INSUFFICIENT DATA BEHAVIOR: When insufficient information is available, prefer stating it ("Based on the available source, there is not enough information to support additional specific claims.") over inventing information.
-10. REAL PROVIDER VS DEMO PROVIDER: Demo Mode must use Available project data ONLY.
-11. GLOBAL RULE: MCF should follow this priority: Current project data -> Current source/grounding data -> Approved workflow context -> Creative transformation of that information -> Nothing else.
 """
 
+# Backwards-compatible name used by existing imports and tests.
+GLOBAL_RELEVANCE_REQUIREMENT = SHARED_SYSTEM_RULES
 
+# Sent as the system message by real providers (Claude, OpenAI). The detailed rules travel in the
+# prompt itself so that every provider receives exactly the same instructions.
+PROVIDER_SYSTEM_PROMPT = (
+    "You are the content strategy and generation engine of MCF (Multimodal Content Factory). "
+    "You help a team promote a specific product or idea. Work only from the project data in the "
+    "user message, follow its rules and stage instructions exactly, and return output that matches "
+    "the requested schema. When the project data does not support a claim, leave it out rather "
+    "than inventing facts, statistics, names, or quotes."
+)
+
+_SECTION_RULE = "=================================================="
+
+ContextItem = Tuple[str, Optional[str]]
+
+
+def _render_item(label: str, value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if "\n" in text or len(text) > 120:
+        return f"{label}:\n{text}"
+    return f"{label}: {text}"
+
+
+def build_stage_prompt(stage_title: str, context: Iterable[ContextItem], instructions: str) -> str:
+    """Compose shared rules + current project context + stage instructions into one prompt.
+
+    Empty context values are skipped so prompts never contain placeholder noise.
+    """
+    rendered = [line for line in (_render_item(label, value) for label, value in context) if line]
+    context_block = "\n\n".join(rendered) if rendered else "(No project context is available.)"
+    return (
+        f"{SHARED_SYSTEM_RULES}\n"
+        f"{_SECTION_RULE}\nCURRENT PROJECT CONTEXT\n{_SECTION_RULE}\n"
+        f"{context_block}\n\n"
+        f"{_SECTION_RULE}\nSTAGE INSTRUCTIONS — {stage_title}\n{_SECTION_RULE}\n"
+        f"{instructions.strip()}\n"
+    )
+
+
+def bullet_list(items: Iterable[str]) -> str:
+    return "\n".join(f"- {item}" for item in items if item)

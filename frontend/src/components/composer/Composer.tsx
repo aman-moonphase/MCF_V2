@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { toast } from 'sonner';
 import { motion, AnimatePresence } from "framer-motion"
 import { Paperclip, Link2, Sparkles, Settings2, ArrowRight, FileText, Mail, Briefcase, MessageSquare, Code } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -128,6 +129,7 @@ export function Composer() {
       router.push(`/projects/${project.id}`)
     } catch (error) {
       console.error("Failed to initialize project:", error)
+      toast.error(`Could not create the project: ${error instanceof Error ? error.message : String(error)}`)
       setIsSubmitting(false)
     }
   }

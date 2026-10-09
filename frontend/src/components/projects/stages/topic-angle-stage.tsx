@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { TopicAngle } from '@/types/workflow';
 import { TopicAngleService } from '@/lib/services/topic-angle.service';
 import { ProjectService } from '@/lib/project-service';
@@ -51,6 +52,7 @@ export function TopicAngleStage({ project, activeStage, onComplete }: Props) {
       });
     } catch (e) {
       console.error(e);
+      toast.error(`Topic & angle generation failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsAnalyzing(false);
     }

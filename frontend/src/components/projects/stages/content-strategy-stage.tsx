@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { ContentStrategy } from '@/types/workflow';
 import { ContentStrategyService } from '@/lib/services/content-strategy.service';
 import { ProjectService } from '@/lib/project-service';
@@ -54,6 +55,7 @@ export function ContentStrategyStage({ project, activeStage, onComplete }: Props
       });
     } catch (e) {
       console.error(e);
+      toast.error(`Content strategy generation failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsGenerating(false);
     }
@@ -65,9 +67,11 @@ export function ContentStrategyStage({ project, activeStage, onComplete }: Props
     setIsApproving(true);
     try {
       // Save the edited strategy
-      await ProjectService.updateWorkflowStage(project.id, activeStage.id, {
+      const saved = await ProjectService.updateWorkflowStage(project.id, activeStage.id, {
         data: { ...activeStage.data, strategy: editedStrategy }
       });
+      if (!saved) return;
+      toast.success('Content strategy saved');
       
       setIsEditing(false);
       setStrategy(editedStrategy);

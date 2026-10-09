@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { ProjectService } from '@/lib/project-service';
+import { toast } from 'sonner';
 import { Project } from '@/types/project';
 import { ProjectCard } from '@/components/projects/project-card';
 import { Search, Plus, Filter, LayoutGrid, Trash2, Loader2 } from 'lucide-react';
@@ -33,6 +34,7 @@ export default function ProjectsPage() {
       if (success) {
         setProjects(projects.filter(p => p.id !== projectToDelete.id));
         setProjectToDelete(null);
+        toast.success('Project deleted');
       } else {
         setDeleteError('Failed to delete project. Please try again.');
       }

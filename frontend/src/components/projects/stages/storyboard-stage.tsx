@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Storyboard, StoryboardScene } from '@/types/workflow';
 import { StoryboardService } from '@/lib/services/storyboard.service';
 import { ProjectService } from '@/lib/project-service';
@@ -82,9 +83,11 @@ export function StoryboardStage({ project, activeStage, onComplete }: Props) {
     const updatedScenes = editedStoryboard.scenes.map((s, index) => ({ ...s, order: index + 1 }));
     const finalStoryboard = { ...editedStoryboard, scenes: updatedScenes, status: 'Needs Review' as const };
     
-    await ProjectService.updateWorkflowStage(project.id, activeStage.id, {
+    const saved = await ProjectService.updateWorkflowStage(project.id, activeStage.id, {
       data: { ...activeStage.data, storyboard: finalStoryboard }
     });
+    if (!saved) return;
+    toast.success('Storyboard draft saved');
     
     setIsEditing(false);
     setStoryboard(finalStoryboard);

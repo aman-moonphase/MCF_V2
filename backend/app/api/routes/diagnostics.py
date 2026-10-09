@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.db.session import get_db
 from app.core.config import settings
+from app.ai.config import SUPPORTED_AI_PROVIDERS, normalize_provider_name
 from app.schemas.diagnostics import (
     DiagnosticsResponse, 
     BackendDiagnostic, 
@@ -59,21 +60,31 @@ async def get_diagnostics(db: AsyncSession = Depends(get_db), current_user: User
     # Mask API keys, never expose them!
     ai_status = "Ready"
     ai_msg = "AI Provider configured successfully"
-    if settings.AI_PROVIDER.lower() != "demo":
-        if not settings.OPENAI_API_KEY or settings.OPENAI_API_KEY.strip() == "":
+    provider = normalize_provider_name(settings.AI_PROVIDER)
+    model = settings.AI_MODEL_NAME
+    if provider not in SUPPORTED_AI_PROVIDERS:
+        ai_status = "Not configured"
+        ai_msg = f"Unsupported AI provider. Use one of: {', '.join(SUPPORTED_AI_PROVIDERS)}"
+    elif provider == "openai" and not (settings.OPENAI_API_KEY or "").strip():
+        ai_status = "Not configured"
+        ai_msg = "OpenAI API Key is missing for production AI Provider"
+    elif provider == "claude":
+        model = settings.CLAUDE_MODEL
+        if not (settings.ANTHROPIC_API_KEY or "").strip():
             ai_status = "Not configured"
-            ai_msg = "OpenAI API Key is missing for production AI Provider"
-    
+            ai_msg = "Anthropic API Key is missing for the Claude provider"
+    elif provider == "demo":
+        model = "Deterministic demo (no model)"
+
     ai = AIDiagnostic(
         status=ai_status,
-        provider=settings.AI_PROVIDER,
-        model=settings.AI_MODEL_NAME,
+        provider=provider,
+        model=model,
         message=ai_msg
     )
 
-    # 5. Embedding Provider
-    # Often same as AI provider in this architecture unless overridden
-    embedding_provider = getattr(settings, 'EMBEDDING_PROVIDER', settings.AI_PROVIDER)
+    # 5. Embedding Provider (chosen independently; Claude has no embeddings API)
+    embedding_provider = settings.resolved_embedding_provider
     emb_status = "Ready"
     emb_msg = "Embeddings configured successfully"
     if embedding_provider.lower() != "demo":

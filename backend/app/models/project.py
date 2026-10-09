@@ -23,6 +23,10 @@ class Project(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     owner = relationship("User", back_populates="projects")
 
+    # Optional product this project (campaign) promotes. Deleting a product keeps its projects.
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    product = relationship("Product", back_populates="projects")
+
     # Relationship to WorkflowStage
     stages = relationship("WorkflowStage", back_populates="project", cascade="all, delete-orphan", order_by="WorkflowStage.created_at")
 

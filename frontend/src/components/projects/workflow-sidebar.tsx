@@ -4,6 +4,7 @@ import React from 'react';
 import { Project, WorkflowStage } from '@/types/project';
 import { CheckCircle2, Circle, Clock, Lock, PlayCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getStageLabel } from '@/lib/workflow-stages';
 
 interface WorkflowSidebarProps {
   project: Project;
@@ -21,10 +22,6 @@ export function WorkflowSidebar({ project, onStageSelect, activeStageId }: Workf
       case 'Needs Review': return <Clock className="w-5 h-5 text-amber-500" />;
       default: return <Circle className="w-5 h-5 text-muted-foreground/30" />;
     }
-  };
-
-  const formatStageName = (type: string) => {
-    return type.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   };
 
   return (
@@ -69,7 +66,7 @@ export function WorkflowSidebar({ project, onStageSelect, activeStageId }: Workf
                   isActive ? "font-semibold text-foreground" : "font-medium text-muted-foreground group-hover:text-foreground",
                   isLocked && "text-muted-foreground/70"
                 )}>
-                  {formatStageName(stage.type)}
+                  {getStageLabel(stage)}
                 </span>
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
                   {stage.status}

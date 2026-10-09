@@ -9,7 +9,10 @@ from ...services.project_service import ProjectService
 from ...services.workflow_stage_service import WorkflowStageService
 from ...services.retrieval_service import RetrievalService
 from ...ai.services.ai_orchestrator import AIOrchestrator
-from ...ai.config import AIConfig
+from ...ai.config import build_embedding_config
+from ...ai.content_types import CONTENT_TYPES, normalize_content_type
+from ...services.source_text_service import get_project_source_text
+from ...services.strategy_service import StrategyService, project_uses_strategy
 from ...api.deps import get_current_user
 from ...models.user import User
 
@@ -51,26 +54,38 @@ class ScriptRequest(BaseModel):
     project_id: str
 
 
-def _get_source_text(project) -> str:
-    """Extract the best available source text from a project."""
-    return (
-        project.source_reference
-        or project.description
-        or f"Project: {project.title}"
-    )
+async def _load_source_text(db: AsyncSession, project) -> str:
+    """The project's full ingested source text (never the 500-char source_reference preview)."""
+    return await get_project_source_text(db, project)
 
-def _get_ai_config() -> AIConfig:
-    from ...core.config import settings
-    return AIConfig(
-        provider=settings.AI_PROVIDER,
-        api_key=settings.OPENAI_API_KEY,
-        model_name=settings.AI_MODEL_NAME,
-        temperature=settings.AI_TEMPERATURE
-    )
+
+async def _get_approved_content_type(stage_service: WorkflowStageService, project_uuid: UUID) -> str:
+    """The approved content type — a hard constraint for every downstream stage."""
+    try:
+        content_type_stage = await stage_service.get_stage(project_uuid, "content-type")
+    except HTTPException as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=400, detail="Content type data not found. Complete Content Type first.")
+        raise
+    if not content_type_stage.data:
+        raise HTTPException(status_code=400, detail="Content type data not found. Complete Content Type first.")
+
+    raw_type = content_type_stage.data.get("approved_type") or content_type_stage.data.get("approvedType")
+    if not raw_type:
+        raise HTTPException(status_code=400, detail="No approved content type found. Please approve a content type first.")
+
+    approved = normalize_content_type(raw_type)
+    if not approved:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Approved content type '{raw_type}' is not supported. Supported: {', '.join(CONTENT_TYPES)}.",
+        )
+    return approved
+
 
 async def _get_grounding_context(db: AsyncSession, project_uuid: UUID, query: str) -> dict:
     """Helper to perform retrieval and format it for the LangGraph state."""
-    config = _get_ai_config()
+    config = build_embedding_config()
     try:
         chunks = await RetrievalService.retrieve(db, project_uuid, query, config, top_k=5)
         if not chunks:
@@ -104,10 +119,29 @@ async def generate_content_type(
 
     project_service = ProjectService(db, current_user.id)
     project = await project_service.get_project(project_uuid)
-    source_text = _get_source_text(project)
-    
+
+    # Projects in the product workflow take their content type recommendation from the approved
+    # Promotion Strategy, so the strategy and the generated content can never silently disagree.
+    if await project_uses_strategy(db, project):
+        strategy = await StrategyService(db, current_user.id).approved_strategy_for_project(project)
+        if strategy is None:
+            raise HTTPException(status_code=409, detail="Approve the Promotion Strategy before choosing the Content Type.")
+        direction = strategy.strategy["content_direction"]
+        return {
+            "recommendation": {
+                "recommendedType": direction["primary_content_type"],
+                "alternatives": direction.get("alternatives") or [],
+                "reasoning": direction.get("reason") or "",
+                "sourceSignals": (direction.get("subject_areas") or [])[:5],
+            },
+            "from_strategy": True,
+            "strategy_version": strategy.version,
+        }
+
+    source_text = await _load_source_text(db, project)
+
     grounding_context = await _get_grounding_context(
-        db, project_uuid, 
+        db, project_uuid,
         query="What is the format and primary medium (e.g. video, article, short post) best suited for this source?"
     )
 
@@ -131,7 +165,7 @@ async def generate_content_selection(
 
     project_service = ProjectService(db, current_user.id)
     project = await project_service.get_project(project_uuid)
-    source_text = _get_source_text(project)
+    source_text = await _load_source_text(db, project)
     
     grounding_context = await _get_grounding_context(
         db, project_uuid, 
@@ -140,13 +174,7 @@ async def generate_content_selection(
 
     stage_service = WorkflowStageService(db, current_user.id)
     
-    content_type_stage = await stage_service.get_stage(project_uuid, "content-type")
-    if not content_type_stage.data:
-        raise HTTPException(status_code=400, detail="Content type data not found. Complete Content Type first.")
-        
-    approved_content_type = content_type_stage.data.get("approved_type") or content_type_stage.data.get("approvedType")
-    if not approved_content_type:
-        raise HTTPException(status_code=400, detail="No approved content type found. Please approve a content type first.")
+    approved_content_type = await _get_approved_content_type(stage_service, project_uuid)
 
     try:
         result = await orchestrator.run_content_selection(source_text, approved_content_type, grounding_context)
@@ -168,17 +196,11 @@ async def generate_platform_strategy(
 
     project_service = ProjectService(db, current_user.id)
     project = await project_service.get_project(project_uuid)
-    source_text = _get_source_text(project)
+    source_text = await _load_source_text(db, project)
 
     stage_service = WorkflowStageService(db, current_user.id)
     
-    content_type_stage = await stage_service.get_stage(project_uuid, "content-type")
-    if not content_type_stage.data:
-        raise HTTPException(status_code=400, detail="Content type data not found.")
-        
-    approved_content_type = content_type_stage.data.get("approved_type") or content_type_stage.data.get("approvedType")
-    if not approved_content_type:
-        raise HTTPException(status_code=400, detail="No approved content type found.")
+    approved_content_type = await _get_approved_content_type(stage_service, project_uuid)
 
     content_selection_stage = await stage_service.get_stage(project_uuid, "content-selection")
 
@@ -216,16 +238,10 @@ async def generate_topic_angle(
 
     project_service = ProjectService(db, current_user.id)
     project = await project_service.get_project(project_uuid)
-    source_text = _get_source_text(project)
+    source_text = await _load_source_text(db, project)
     stage_service = WorkflowStageService(db, current_user.id)
 
-    content_type_stage = await stage_service.get_stage(project_uuid, "content-type")
-    if not content_type_stage.data:
-        raise HTTPException(status_code=400, detail="Content type data not found.")
-        
-    approved_content_type = content_type_stage.data.get("approved_type") or content_type_stage.data.get("approvedType")
-    if not approved_content_type:
-        raise HTTPException(status_code=400, detail="No approved content type found.")
+    approved_content_type = await _get_approved_content_type(stage_service, project_uuid)
 
     content_selection_stage = await stage_service.get_stage(project_uuid, "content-selection")
     if not content_selection_stage.data:
@@ -272,16 +288,10 @@ async def generate_content_strategy(
 
     project_service = ProjectService(db, current_user.id)
     project = await project_service.get_project(project_uuid)
-    source_text = _get_source_text(project)
+    source_text = await _load_source_text(db, project)
     stage_service = WorkflowStageService(db, current_user.id)
 
-    content_type_stage = await stage_service.get_stage(project_uuid, "content-type")
-    if not content_type_stage.data:
-        raise HTTPException(status_code=400, detail="Content type data not found.")
-        
-    approved_content_type = content_type_stage.data.get("approved_type") or content_type_stage.data.get("approvedType")
-    if not approved_content_type:
-        raise HTTPException(status_code=400, detail="No approved content type found.")
+    approved_content_type = await _get_approved_content_type(stage_service, project_uuid)
 
     content_selection_stage = await stage_service.get_stage(project_uuid, "content-selection")
     if not content_selection_stage.data:
@@ -337,16 +347,10 @@ async def generate_storyboard(
 
     project_service = ProjectService(db, current_user.id)
     project = await project_service.get_project(project_uuid)
-    source_text = _get_source_text(project)
+    source_text = await _load_source_text(db, project)
     stage_service = WorkflowStageService(db, current_user.id)
 
-    content_type_stage = await stage_service.get_stage(project_uuid, "content-type")
-    if not content_type_stage.data:
-        raise HTTPException(status_code=400, detail="Content type data not found.")
-        
-    approved_content_type = content_type_stage.data.get("approved_type") or content_type_stage.data.get("approvedType")
-    if not approved_content_type:
-        raise HTTPException(status_code=400, detail="No approved content type found.")
+    approved_content_type = await _get_approved_content_type(stage_service, project_uuid)
 
     try:
         cs_stage = await stage_service.get_stage(project_uuid, "content-selection")
@@ -437,16 +441,10 @@ async def generate_script(
 
     project_service = ProjectService(db, current_user.id)
     project = await project_service.get_project(project_uuid)
-    source_text = _get_source_text(project)
+    source_text = await _load_source_text(db, project)
     stage_service = WorkflowStageService(db, current_user.id)
 
-    content_type_stage = await stage_service.get_stage(project_uuid, "content-type")
-    if not content_type_stage.data:
-        raise HTTPException(status_code=400, detail="Content type data not found.")
-        
-    approved_content_type = content_type_stage.data.get("approved_type") or content_type_stage.data.get("approvedType")
-    if not approved_content_type:
-        raise HTTPException(status_code=400, detail="No approved content type found.")
+    approved_content_type = await _get_approved_content_type(stage_service, project_uuid)
 
     try:
         cs_stage = await stage_service.get_stage(project_uuid, "content-selection")

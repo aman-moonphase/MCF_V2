@@ -2,6 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.workflow import WORKFLOW_STAGES, initial_status
 from app.repositories.project_repo import ProjectRepository
 from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.models.project import Project
@@ -15,27 +16,15 @@ class ProjectService:
     async def create_project(self, project_in: ProjectCreate) -> Project:
         if not project_in.title.strip():
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Title cannot be empty")
-        
+
         project = await self.repo.create(project_in)
-        
+
         stage_repo = WorkflowStageRepository(self.repo.session)
-        DEFAULT_STAGES = [
-            'source-grounding',
-            'content-type',
-            'content-selection',
-            'platform-strategy',
-            'topic-angle',
-            'content-strategy',
-            'storyboard',
-            'final-script',
-            'review-approval'
-        ]
-        
-        for index, stage_type in enumerate(DEFAULT_STAGES):
-            stage_status = 'Not Started' if index == 0 else 'Locked'
-            stage_in = WorkflowStageCreate(stage_type=stage_type, status=stage_status)
+        # One row per stage in the canonical workflow definition (app/core/workflow.py).
+        for index, stage in enumerate(WORKFLOW_STAGES):
+            stage_in = WorkflowStageCreate(stage_type=stage.key, status=initial_status(index))
             await stage_repo.create(project.id, stage_in)
-            
+
         return await self.repo.get(project.id)
 
     async def get_project(self, project_id: UUID) -> Project:

@@ -1,12 +1,14 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, ForeignKey
+from sqlalchemy import Column, String, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
 class WorkflowStage(Base):
     __tablename__ = "workflow_stages"
+    # A project has at most one row per stage type.
+    __table_args__ = (UniqueConstraint("project_id", "stage_type", name="uq_workflow_stages_project_stage"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)

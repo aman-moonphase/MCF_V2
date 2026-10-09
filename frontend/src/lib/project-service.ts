@@ -1,17 +1,7 @@
-import { Project, ProjectStatus, WorkflowStage, WorkflowStageType, CreateProjectInput } from '../types/project';
+import { Project, ProjectStatus, WorkflowStage, CreateProjectInput } from '../types/project';
+import { toast } from 'sonner';
 import { apiClient } from './api-client';
-
-export const DEFAULT_STAGES: WorkflowStageType[] = [
-  'source-grounding',
-  'content-type',
-  'content-selection',
-  'platform-strategy',
-  'topic-angle',
-  'content-strategy',
-  'storyboard',
-  'final-script',
-  'review-approval'
-];
+import { errorFromResponse } from './api-errors';
 
 export const ProjectService = {
   getProjects: async (): Promise<Project[]> => {
@@ -57,6 +47,7 @@ export const ProjectService = {
       };
     } catch (e) {
       console.error(`Failed to update project status ${id}`, e);
+      toast.error(`Could not update the project status: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   },
@@ -67,6 +58,7 @@ export const ProjectService = {
       return true;
     } catch (e) {
       console.error(`Failed to delete project ${id}`, e);
+      toast.error(`Could not delete the project: ${e instanceof Error ? e.message : String(e)}`);
       return false;
     }
   },
@@ -101,6 +93,7 @@ export const ProjectService = {
       };
     } catch (e) {
       console.error(`Failed to update workflow stage`, e);
+      toast.error(`Could not save your changes: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   },
@@ -120,7 +113,8 @@ export const ProjectService = {
         body: formData,
       });
       if (!response.ok) {
-        throw new Error(`Failed to ingest source: ${await response.text()}`);
+        const error = await errorFromResponse(response);
+        throw new Error(`Failed to ingest source: ${error.message}`);
       }
       return await response.json();
     } catch (e) {

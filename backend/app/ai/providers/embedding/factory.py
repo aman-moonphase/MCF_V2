@@ -4,12 +4,14 @@ from .demo import DemoEmbeddingProvider
 from .openai import OpenAIEmbeddingProvider
 from app.ai.config import AIConfig
 
+
 class EmbeddingProviderFactory:
     @staticmethod
     def get_provider(config: AIConfig) -> BaseEmbeddingProvider:
-        # Default to demo if not explicitly set, or allow environment override
-        embedding_provider = os.getenv("EMBEDDING_PROVIDER", config.provider).lower()
-        
+        # The embedding provider is chosen by config.provider (see app.ai.config.build_embedding_config,
+        # driven by EMBEDDING_PROVIDER). Claude has no embeddings API, so it is not a valid choice here.
+        embedding_provider = (config.provider or "").strip().lower()
+
         if embedding_provider == "openai":
             if not config.api_key:
                 raise ValueError("OPENAI_API_KEY is required when using the 'openai' embedding provider.")
@@ -19,6 +21,10 @@ class EmbeddingProviderFactory:
                 model_name=model_name,
                 api_key=config.api_key
             )
-        
-        # Default fallback
-        return DemoEmbeddingProvider()
+
+        if embedding_provider == "demo":
+            return DemoEmbeddingProvider()
+
+        raise ValueError(
+            f"Unsupported embedding provider '{config.provider}'. Set EMBEDDING_PROVIDER to 'demo' or 'openai'."
+        )

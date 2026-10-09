@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { PlatformRecommendation } from '@/types/workflow';
 import { PlatformStrategyService } from '@/lib/services/platform-strategy.service';
 import { ProjectService } from '@/lib/project-service';
@@ -68,6 +69,7 @@ export function PlatformStrategyStage({ project, activeStage, onComplete }: Prop
       });
     } catch (e) {
       console.error(e);
+      toast.error(`Platform strategy generation failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsAnalyzing(false);
     }

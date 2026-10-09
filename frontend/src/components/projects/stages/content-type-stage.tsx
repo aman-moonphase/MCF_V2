@@ -47,14 +47,14 @@ export function ContentTypeStage({ project, activeStage, onComplete }: ContentTy
     setIsApproving(true);
     setError(null);
     try {
-      const updatedData = { ...data, approved_type: type };
-      setData(updatedData);
-      
-      await ProjectService.updateWorkflowStage(project.id, activeStage.id, {
+      const updated = await ProjectService.updateWorkflowStage(project.id, activeStage.id, {
         status: 'Completed',
-        data: updatedData
+        data: { ...data, approved_type: type }
       });
-      
+      if (!updated) return;  // the save failed (e.g. strategy not approved); the error was already shown
+
+      const saved = updated.stages.find((s) => s.id === activeStage.id);
+      setData(saved?.data || { ...data, approved_type: type });
       await onComplete();
     } catch (e: any) {
       setError(e.message || 'Failed to approve content type');
@@ -118,13 +118,17 @@ export function ContentTypeStage({ project, activeStage, onComplete }: ContentTy
   const alternatives = rec.alternatives || [];
   const sourceSignals = rec.sourceSignals || rec.source_signals || [];
   const approvedType = data.approved_type || data.approvedType;
+  const fromStrategy = Boolean(data.fromStrategy || data.from_strategy);
+  const overridesStrategy = Boolean(data.overridesStrategy || data.overrides_strategy);
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-2xl font-bold text-foreground">Recommended Format</h3>
-          <p className="text-muted-foreground mt-1">Based on the source material</p>
+          <p className="text-muted-foreground mt-1">
+            {fromStrategy ? 'From your approved Promotion Strategy — you can still override it below' : 'Based on the source material'}
+          </p>
         </div>
         
         <button
@@ -174,7 +178,9 @@ export function ContentTypeStage({ project, activeStage, onComplete }: ContentTy
                 <h4 className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">
                   {recommendedType}
                 </h4>
-                <div className="text-sm font-medium text-primary mt-1">Top Recommendation</div>
+                <div className="text-sm font-medium text-primary mt-1">
+                  {fromStrategy ? 'Recommended by your Promotion Strategy' : 'Top Recommendation'}
+                </div>
               </div>
               <p className="text-sm text-muted-foreground leading-relaxed">
                 {rec.reasoning}
@@ -194,6 +200,11 @@ export function ContentTypeStage({ project, activeStage, onComplete }: ContentTy
 
         <div className="space-y-4 pt-4 border-t border-border/50">
           <h4 className="text-sm font-semibold text-foreground">Other formats (Manual Override)</h4>
+          {approvedType && overridesStrategy && (
+            <p className="text-xs text-amber-500">
+              You chose {approvedType} instead of the strategy&apos;s recommendation. All downstream content will be {approvedType}.
+            </p>
+          )}
           <div className="grid sm:grid-cols-2 gap-4">
             {["Video", "Image", "Carousel", "Article", "Newsletter", "Social Post"]
               .filter(t => t !== recommendedType)

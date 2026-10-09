@@ -107,7 +107,7 @@ export function ScheduleDialog({ projectId, isOpen, onClose, onScheduled, existi
       onClose();
     } catch (error: any) {
       console.error('Schedule error:', error);
-      toast.error(error.response?.data?.detail || 'Failed to schedule project');
+      toast.error(error?.message || 'Failed to schedule project');
     } finally {
       setLoading(false);
     }

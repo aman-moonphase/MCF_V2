@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Project, ProjectStatus } from '@/types/project';
 import { Clock, CheckCircle2, AlertCircle, PlayCircle, FileText, Globe, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns'; // Wait, is date-fns installed? I can just use a simple formatter or Intl.RelativeTimeFormat
+import { getStageLabelByType } from '@/lib/workflow-stages';
 
 const getStatusColor = (status: ProjectStatus) => {
   switch (status) {
@@ -87,7 +88,7 @@ export function ProjectCard({ project, onDelete }: { project: Project, onDelete?
         {/* Progress Bar */}
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs font-medium text-slate-500 dark:text-muted-foreground">
-            <span>{project.currentStage.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}</span>
+            <span>{getStageLabelByType(project, project.currentStage)}</span>
             <span>{progressPercent}%</span>
           </div>
           <div className="h-1.5 w-full bg-slate-100 dark:bg-muted rounded-full overflow-hidden">

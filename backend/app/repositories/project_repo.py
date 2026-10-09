@@ -22,6 +22,9 @@ class ProjectRepository:
             select(Project)
             .options(selectinload(Project.stages))
             .where(Project.id == project_id, Project.user_id == self.user_id)
+            # Sessions use expire_on_commit=False, so without this an already-loaded (possibly
+            # stale, e.g. empty right after creation) stages collection would be returned as-is.
+            .execution_options(populate_existing=True)
         )
         return result.scalars().first()
 

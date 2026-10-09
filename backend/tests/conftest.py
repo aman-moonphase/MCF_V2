@@ -13,6 +13,10 @@ from app.core.config import settings
 
 # Test DB URL
 TEST_DATABASE_URL = settings.DATABASE_URL.replace("/mcf_db", "/mcf_db_test")
+# The setup below drops all tables. Refuse to run against anything but a dedicated test database.
+assert TEST_DATABASE_URL != settings.DATABASE_URL and TEST_DATABASE_URL.rstrip("/").endswith("_test"), (
+    "Refusing to run tests: could not derive a separate *_test database from DATABASE_URL."
+)
 
 test_engine = create_async_engine(
     TEST_DATABASE_URL,
@@ -72,6 +76,37 @@ async def setup_test_database():
     # async with test_engine.begin() as conn:
     #     await conn.run_sync(Base.metadata.drop_all)
     await test_engine.dispose()
+
+@pytest.fixture(autouse=True)
+def smtp_outbox(monkeypatch):
+    """Never send real email from tests.
+
+    backend/.env may hold real SMTP credentials, and EmailService sends whenever they are set.
+    The SMTP transport is replaced with an in-memory fake, so the full EmailService code path still
+    runs and tests can inspect what would have been sent.
+    """
+    from app.services import email_service
+
+    sent = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            self.host, self.port = host, port
+
+        def starttls(self):
+            pass
+
+        def login(self, user, password):
+            pass
+
+        def sendmail(self, from_addr, to_addrs, msg):
+            sent.append({"from": from_addr, "to": to_addrs, "message": msg})
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(email_service.smtplib, "SMTP", FakeSMTP)
+    return sent
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:

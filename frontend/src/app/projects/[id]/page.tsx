@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ProjectService, DEFAULT_STAGES } from '@/lib/project-service';
+import { ProjectService } from '@/lib/project-service';
+import { toast } from 'sonner';
 import { Project, ProjectStatus } from '@/types/project';
 import { WorkflowSidebar } from '@/components/projects/workflow-sidebar';
 import { WorkspaceContent } from '@/components/projects/workspace-content';
@@ -78,6 +79,7 @@ export default function ProjectWorkspace() {
     try {
       const success = await ProjectService.deleteProject(project.id);
       if (success) {
+        toast.success('Project deleted');
         router.push('/projects');
       } else {
         setDeleteError('Failed to delete project. Please try again.');

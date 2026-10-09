@@ -50,10 +50,15 @@ class ExtractionService:
         if not url:
             raise ValueError("Empty URL provided")
             
+        from app.core.config import settings
+        from app.core.url_safety import safe_get
+
         try:
-            response = requests.get(url, timeout=15, headers={
+            # safe_get validates the URL and every redirect hop against SSRF rules
+            # (UnsafeURLError is a ValueError and propagates as an ingestion failure).
+            response = safe_get(url, timeout=15, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            })
+            }, allow_private=settings.ALLOW_PRIVATE_URL_INGESTION)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Failed to fetch URL: {str(e)}")

@@ -96,7 +96,8 @@ class IngestionService:
                 db_chunks.append(db_chunk)
                 db.add(db_chunk)
 
-            # Mark as completed
+            # Mark as completed and keep the full extracted text as the canonical source
+            source.extracted_text = extract_result.text
             source.status = "completed"
             source.metadata_ = extract_result.metadata # Update with extracted meta
             await db.commit()

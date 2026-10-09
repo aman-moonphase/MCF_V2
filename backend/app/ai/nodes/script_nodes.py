@@ -1,19 +1,22 @@
 from typing import Any, Dict
+
+from ..content_types import check_script, constraint_block, get_profile
+from ..prompts import build_stage_prompt
+from ..providers.factory import get_configured_provider as get_provider
 from ..schemas import AIState, ScriptOutput
-from ..providers.factory import AIProviderFactory
-from ..config import AIConfig
-from ..prompts import GLOBAL_RELEVANCE_REQUIREMENT
+from .common import call_structured, call_text, generation_failure, retry_feedback, validation_failure
+from .common_context import angle_context, source_context, strategy_context
+
+STAGE = "final-script"
 
 
-def get_provider():
-    from ...core.config import settings
-    config = AIConfig(
-        provider=settings.AI_PROVIDER,
-        api_key=settings.OPENAI_API_KEY,
-        model_name=settings.AI_MODEL_NAME,
-        temperature=settings.AI_TEMPERATURE
+def _scenes_detail(scenes: list) -> str:
+    return "\n".join(
+        f"Scene {s.get('order')}: {s.get('title')} | Purpose: {s.get('purpose')} | "
+        f"Narration: {s.get('narration')} | Visual: {s.get('visualDirection')} | "
+        f"On-Screen: {s.get('onScreenText')} | Duration: {s.get('estimatedDuration')}"
+        for s in scenes
     )
-    return AIProviderFactory.get_provider(config)
 
 
 async def analyze_storyboard_context(state: AIState) -> Dict[str, Any]:
@@ -44,30 +47,26 @@ async def analyze_storyboard_context(state: AIState) -> Dict[str, Any]:
 
     provider = get_provider()
 
-    scene_titles = ", ".join(s.get("title", "") for s in scenes)
     platform_name = selected_platforms[0].get("platform", "Unknown") if selected_platforms else "Unknown"
     platform_format = selected_platforms[0].get("recommendedFormat", "") if selected_platforms else ""
 
-    prompt = f"""
-    {GLOBAL_RELEVANCE_REQUIREMENT}
-    Analyze the following approved storyboard and workflow context to prepare for Final Script generation.
-
-    Source Topic: {input_text}
-
-    Platform: {platform_name} ({platform_format})
-    Tone: {approved_strategy.get('tone', '')}
-    Hook Strategy: {approved_strategy.get('hookStrategy', '')}
-    CTA: {approved_strategy.get('callToAction', '')}
-
-    Approved Storyboard — {len(scenes)} scenes:
-    {scene_titles}
-
-    For each scene, identify what narration expansion and platform adaptation is needed
-    to turn the storyboard into a final, publish-ready script.
-    """
+    prompt = build_stage_prompt(
+        "Final Script Analysis",
+        [
+            ("Source Topic", input_text),
+            ("Approved Content Type", state.get("approved_content_type")),
+            ("Platform", f"{platform_name} ({platform_format})" if platform_format else platform_name),
+            ("Tone", approved_strategy.get("tone")),
+            ("Hook Strategy", approved_strategy.get("hookStrategy")),
+            ("Call to Action", approved_strategy.get("callToAction")),
+            (f"Approved Storyboard — {len(scenes)} units", ", ".join(s.get("title", "") for s in scenes)),
+        ],
+        "For each storyboard unit, identify what copy expansion and platform adaptation is needed "
+        "to turn the storyboard into a final, publish-ready script.",
+    )
 
     try:
-        analysis = await provider.generate_text(prompt)
+        analysis = await call_text(provider, prompt, state, STAGE)
         return {"intent": analysis}
     except Exception as e:
         return {"error": f"Failed to analyze storyboard context: {str(e)}"}
@@ -78,85 +77,48 @@ async def generate_script(state: AIState) -> Dict[str, Any]:
     Generate the final script by expanding each storyboard scene into a
     complete, platform-adapted script section.
     """
-    input_text = state.get("input_text", "")
-    selected_opportunity = state.get("selected_opportunity", {})
-    selected_platforms = state.get("selected_platforms", [])
-    selected_angle = state.get("selected_angle", {})
-    approved_strategy = state.get("approved_strategy", {})
-    approved_storyboard = state.get("approved_storyboard", {})
-    analysis = state.get("intent", "")
-
     if state.get("error") and state.get("retries", 0) >= 3:
         return {}  # Max retries reached — abort
 
     provider = get_provider()
-
-    platform_name = selected_platforms[0].get("platform", "Unknown") if selected_platforms else "Unknown"
-    platform_format = selected_platforms[0].get("recommendedFormat", "Short-form video") if selected_platforms else "Short-form video"
-
-    scenes = approved_storyboard.get("scenes", [])
-    scenes_detail = "\n".join([
-        f"Scene {s.get('order')}: {s.get('title')} | Purpose: {s.get('purpose')} | "
-        f"Narration: {s.get('narration')} | Visual: {s.get('visualDirection')} | "
-        f"On-Screen: {s.get('onScreenText')} | Duration: {s.get('estimatedDuration')}"
-        for s in scenes
-    ])
-
-    grounding_context = state.get("grounding_context", {})
-    grounding_text = grounding_context.get("text", "")
-    context_str = f"Extra Grounding Context (use if relevant):\n{grounding_text}\n\n" if grounding_text else ""
-
     approved_type = state.get("approved_content_type")
-    type_str = f"""
-CRITICAL INSTRUCTION:
-The user has explicitly approved the Content Type: {approved_type}.
-You MUST generate a final script that is 100% {approved_type}-oriented.
-Do NOT recommend or output any other content type.
-""" if approved_type else ""
+    profile = get_profile(approved_type)
+    unit = profile.unit if profile else "scene"
 
-    prompt = f"""
-    {GLOBAL_RELEVANCE_REQUIREMENT}
-    Based on the following approved storyboard and complete workflow context, generate a final,
-    publish-ready script. The script MUST follow the storyboard exactly — preserving scene order,
-    narrative beats, and visual direction.
-    
-    {context_str}
-    {type_str}
-    Platform: {platform_name}
-    Format: {platform_format}
-    Tone: {approved_strategy.get('tone', 'Professional, accessible')}
-    Hook Strategy: {approved_strategy.get('hookStrategy', '')}
-    Core Message: {approved_strategy.get('coreMessage', '')}
-    Call to Action: {approved_strategy.get('callToAction', '')}
-    Target Audience: {approved_strategy.get('targetAudience', '')}
+    selected_platforms = state.get("selected_platforms") or []
+    approved_strategy = state.get("approved_strategy") or {}
+    approved_storyboard = state.get("approved_storyboard") or {}
+    platform_name = selected_platforms[0].get("platform", "Unknown") if selected_platforms else "Unknown"
+    platform_format = selected_platforms[0].get("recommendedFormat", "") if selected_platforms else ""
 
-    Selected Topic Angle:
-    Hook: {selected_angle.get('hook', '')}
-    Core Promise: {selected_angle.get('corePromise', '')}
+    prompt = build_stage_prompt(
+        "Final Script",
+        [
+            *source_context(state),
+            ("Platform", platform_name),
+            ("Platform Format", platform_format),
+            *strategy_context(approved_strategy),
+            *angle_context(state.get("selected_angle")),
+            ("Approved Storyboard (MUST be followed in order)", _scenes_detail(approved_storyboard.get("scenes", []))),
+            ("Analysis", state.get("intent")),
+        ],
+        f"""
+{constraint_block(approved_type)}
 
-    Approved Storyboard Scenes (MUST be followed in order):
-    {scenes_detail}
-
-    Analysis Context:
-    {analysis}
-
-    Generate one ScriptSection per storyboard scene. The narration for each section
-    should be the fully polished, platform-adapted version of the scene's narration.
-    Adapt tone for {platform_name} — {platform_format}.
-    """
+Generate the final, publish-ready script for this {approved_type or 'content'}. It MUST follow the approved
+storyboard exactly — one ScriptSection per storyboard {unit}, in the same order, preserving the
+narrative beats and visual direction. Each section's narration is the polished, platform-adapted copy.
+The script `format` field must describe the approved content type. Adapt the tone for {platform_name}.
+Set `status` to 'Draft'.
+{retry_feedback(state)}
+""",
+    )
 
     try:
-        result = await provider.generate_structured(prompt, ScriptOutput)
-        return {
-            "structured_output": result.model_dump(),
-            "error": None
-        }
+        result = await call_structured(provider, prompt, ScriptOutput, state, STAGE)
+        return {"structured_output": result.model_dump(), "error": None}
     except Exception as e:
-        retries = state.get("retries", 0)
-        return {
-            "error": f"Failed to generate script: {str(e)}",
-            "retries": retries + 1
-        }
+        return generation_failure(state, "Failed to generate script", e)
 
 
 async def validate_script_result(state: AIState) -> Dict[str, Any]:
@@ -166,10 +128,14 @@ async def validate_script_result(state: AIState) -> Dict[str, Any]:
 
     output = state.get("structured_output")
     if not output or "script" not in output:
-        return {"error": "Missing 'script' key in generated output"}
+        return validation_failure(state, "Missing 'script' key in generated output")
 
     script = output["script"]
     if not isinstance(script.get("sections"), list) or len(script["sections"]) == 0:
-        return {"error": "Generated script has no sections"}
+        return validation_failure(state, "Generated script has no sections")
+
+    violation = check_script(state.get("approved_content_type"), script)
+    if violation:
+        return validation_failure(state, violation)
 
     return state

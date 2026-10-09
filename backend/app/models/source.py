@@ -19,6 +19,9 @@ class SourceDocument(Base):
     
     status = Column(String(50), nullable=False, default="pending") # pending, processing, completed, failed
     metadata_ = Column("metadata", JSONB, nullable=True)
+    # Full extracted text of the source (typed text, PDF text, or page text). This is the canonical,
+    # untruncated source the AI pipeline reads; chunks below are derived from it for retrieval.
+    extracted_text = Column(Text, nullable=True)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

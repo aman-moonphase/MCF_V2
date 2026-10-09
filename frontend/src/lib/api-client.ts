@@ -1,3 +1,5 @@
+import { errorFromResponse } from './api-errors';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
 // Helper to convert snake_case to camelCase
@@ -58,12 +60,7 @@ export const apiClient = {
       headers: { ...getAuthHeaders() }
     });
     if (!res.ok) {
-      let errMessage = `API Error: ${res.status} ${res.statusText}`;
-      try {
-        const errData = await res.json();
-        errMessage = errData.detail || errData.message || errMessage;
-      } catch (e) {}
-      throw new Error(errMessage);
+      throw await errorFromResponse(res);
     }
     const data = await res.json();
     return convertKeysToCamelCase(data);
@@ -86,12 +83,7 @@ export const apiClient = {
       body: reqBody,
     });
     if (!res.ok) {
-      let errMessage = `API Error: ${res.status} ${res.statusText}`;
-      try {
-        const errData = await res.json();
-        errMessage = errData.detail || errData.message || errMessage;
-      } catch (e) {}
-      throw new Error(errMessage);
+      throw await errorFromResponse(res);
     }
     const data = await res.json();
     return convertKeysToCamelCase(data);
@@ -107,12 +99,7 @@ export const apiClient = {
       body: JSON.stringify(convertKeysToSnakeCase(body)),
     });
     if (!res.ok) {
-      let errMessage = `API Error: ${res.status} ${res.statusText}`;
-      try {
-        const errData = await res.json();
-        errMessage = errData.detail || errData.message || errMessage;
-      } catch (e) {}
-      throw new Error(errMessage);
+      throw await errorFromResponse(res);
     }
     const data = await res.json();
     return convertKeysToCamelCase(data);
@@ -128,12 +115,7 @@ export const apiClient = {
       body: JSON.stringify(convertKeysToSnakeCase(body)),
     });
     if (!res.ok) {
-      let errMessage = `API Error: ${res.status} ${res.statusText}`;
-      try {
-        const errData = await res.json();
-        errMessage = errData.detail || errData.message || errMessage;
-      } catch (e) {}
-      throw new Error(errMessage);
+      throw await errorFromResponse(res);
     }
     const data = await res.json();
     return convertKeysToCamelCase(data);
@@ -145,12 +127,7 @@ export const apiClient = {
       headers: { ...getAuthHeaders() }
     });
     if (!res.ok) {
-      let errMessage = `API Error: ${res.status} ${res.statusText}`;
-      try {
-        const errData = await res.json();
-        errMessage = errData.detail || errData.message || errMessage;
-      } catch (e) {}
-      throw new Error(errMessage);
+      throw await errorFromResponse(res);
     }
     return true;
   }

@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Script, ScriptSection } from '@/types/workflow';
 import { ScriptService } from '@/lib/services/script.service';
 import { ProjectService } from '@/lib/project-service';
@@ -89,9 +90,11 @@ export function ScriptStage({ project, activeStage, onComplete }: Props) {
     const updatedSections = editedScript.sections.map((s, index) => ({ ...s, order: index + 1 }));
     const finalScript = { ...editedScript, sections: updatedSections, status: 'Needs Review' as const };
     
-    await ProjectService.updateWorkflowStage(project.id, activeStage.id, {
+    const saved = await ProjectService.updateWorkflowStage(project.id, activeStage.id, {
       data: { ...activeStage.data, script: finalScript }
     });
+    if (!saved) return;
+    toast.success('Script draft saved');
     
     setIsEditing(false);
     setScript(finalScript);

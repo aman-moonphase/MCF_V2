@@ -1,16 +1,5 @@
 from ..schemas import AIState, ContentPlanOutput
-from ..providers.factory import AIProviderFactory
-from ..config import AIConfig
-
-def get_provider():
-    from ...core.config import settings
-    config = AIConfig(
-        provider=settings.AI_PROVIDER,
-        api_key=settings.OPENAI_API_KEY,
-        model_name=settings.AI_MODEL_NAME,
-        temperature=settings.AI_TEMPERATURE
-    )
-    return AIProviderFactory.get_provider(config)
+from ..providers.factory import get_configured_provider as get_provider
 
 async def analyze_input(state: AIState) -> AIState:
     provider = get_provider()
