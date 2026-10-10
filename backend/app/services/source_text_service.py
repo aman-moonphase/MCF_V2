@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.text_encoding import repair_mojibake
 from app.models.project import Project
 from app.models.source import DocumentChunk, SourceDocument
 
@@ -36,7 +37,7 @@ async def get_project_source_texts(db: AsyncSession, project: Project) -> List[t
     for doc in result.scalars().all():
         text = doc.extracted_text or (doc.metadata_ or {}).get("raw_text") or await _chunk_text(db, doc.id)
         if text and text.strip():
-            texts.append((doc.name, text.strip()))
+            texts.append((doc.name, repair_mojibake(text.strip())))
     return texts
 
 

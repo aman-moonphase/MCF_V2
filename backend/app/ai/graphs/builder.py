@@ -12,7 +12,7 @@ from typing import Callable, Optional, Tuple
 
 from langgraph.graph import END, START, StateGraph
 
-from ..nodes.common import MAX_RETRIES
+from ..nodes.common import max_attempts
 from ..schemas import AIState
 
 Node = Tuple[str, Callable]
@@ -21,7 +21,7 @@ Node = Tuple[str, Callable]
 def make_should_retry(generate_name: str, validate_name: str) -> Callable[[AIState], str]:
     def should_retry(state: AIState) -> str:
         if state.get("error"):
-            if state.get("retries", 0) < MAX_RETRIES:
+            if state.get("retries", 0) < max_attempts():
                 return generate_name
             return END
         return validate_name
@@ -55,7 +55,7 @@ def build_stage_graph(analyze: Optional[Node], generate: Node, validate: Node, s
     )
 
     def after_validate(state: AIState) -> str:
-        if state.get("error") and state.get("retries", 0) < MAX_RETRIES:
+        if state.get("error") and state.get("retries", 0) < max_attempts():
             return generate_name
         return END
 

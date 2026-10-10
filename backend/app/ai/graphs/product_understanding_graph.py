@@ -5,7 +5,7 @@ Errors end the run (analyze) or retry the failing structured step up to MAX_RETR
 
 from langgraph.graph import END, START, StateGraph
 
-from ..nodes.common import MAX_RETRIES
+from ..nodes.common import max_attempts
 from ..nodes.product_understanding_nodes import (
     analyze_sources, build_profile, generate_questions, identify_gaps, validate_understanding,
 )
@@ -15,7 +15,7 @@ from ..product_schemas import ProductUnderstandingState
 def _retry_or(next_node: str, same_node: str):
     def route(state: ProductUnderstandingState) -> str:
         if state.get("error"):
-            return same_node if state.get("retries", 0) < MAX_RETRIES else END
+            return same_node if state.get("retries", 0) < max_attempts() else END
         return next_node
     return route
 

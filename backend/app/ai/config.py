@@ -13,6 +13,16 @@ class AIConfig(BaseModel):
     effort: str | None = None
 
 
+def claude_model_problem(model_name: str | None) -> str | None:
+    """Why a CLAUDE_MODEL value cannot be sent, or None. The ID is never rewritten or replaced: an
+    unknown-but-well-formed ID goes to the API, which reports it (see ClaudeProvider NotFound handling)."""
+    if model_name is None or not model_name.strip():
+        return "CLAUDE_MODEL is empty. Set it to a Claude API model ID such as 'claude-sonnet-5-5'."
+    if model_name != model_name.strip() or any(c.isspace() for c in model_name):
+        return f"CLAUDE_MODEL {model_name!r} contains spaces. Use the exact Claude API model ID, e.g. 'claude-sonnet-5-5'."
+    return None
+
+
 def normalize_provider_name(provider: str | None) -> str:
     name = (provider or "").strip().lower()
     # "anthropic" is accepted as an alias of "claude".

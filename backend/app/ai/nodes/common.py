@@ -9,6 +9,21 @@ from ..providers.base import AIProviderError, BaseAIProvider
 from ..schemas import AIState
 
 MAX_RETRIES = 3
+SDK_MAX_RETRIES = 2  # Anthropic SDK retries for 408/409/429/5xx and connection errors (normal mode)
+
+
+def max_attempts() -> int:
+    """Generation attempts per AI step: 1 in single-attempt mode (settings.AI_SINGLE_ATTEMPT), else MAX_RETRIES."""
+    from ...core.config import settings
+
+    return 1 if settings.AI_SINGLE_ATTEMPT else MAX_RETRIES
+
+
+def sdk_max_retries() -> int:
+    """SDK-level retries per request: 0 in single-attempt mode, else SDK_MAX_RETRIES."""
+    from ...core.config import settings
+
+    return 0 if settings.AI_SINGLE_ATTEMPT else SDK_MAX_RETRIES
 
 
 async def call_structured(provider: BaseAIProvider, prompt: str, schema: Type[BaseModel], state: AIState, stage: str) -> Any:
@@ -25,7 +40,7 @@ def generation_failure(state: AIState, message: str, exc: Exception) -> Dict[str
     """State update for a failed generate call. Non-retryable provider errors stop the retry loop."""
     retries = state.get("retries", 0) + 1
     if isinstance(exc, AIProviderError) and not exc.retryable:
-        retries = max(retries, MAX_RETRIES)
+        retries = max(retries, max_attempts())
     return {"error": f"{message}: {exc}", "retries": retries}
 
 

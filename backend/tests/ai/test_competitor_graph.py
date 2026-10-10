@@ -78,7 +78,9 @@ def test_grounding_enforces_evidence_rules():
     assert out["posting_cadence"] == []                               # cadence only when observed + cited
     assert [e["excerpt"] for e in out["content_examples"]] == ["Read our blog for accounting tips"]
     assert out["coverage"]["posting_cadence"] == "unknown"
-    assert any("Posting cadence" in u for u in out["unknowns"])
+    # Empty sections are listed by key in unknown_sections; `unknowns` holds only specific unknown items.
+    assert "posting_cadence" in out["unknown_sections"]
+    assert not any("Posting cadence" in u for u in out["unknowns"])
     assert any("removed" in u for u in out["unknowns"])
     assert out["performance_data"] == PERFORMANCE_DATA_NOTE
 
@@ -119,7 +121,8 @@ async def test_demo_analysis_only_uses_supplied_evidence():
     assert any("LinkedIn" in f["statement"] for f in out["promotion_channels"])
     assert any("Webinars" in f["statement"] for f in out["content_formats"])
     assert any("GST invoice generation" in f["statement"] for f in out["overlapping_features"])
-    assert any("WhatsApp invoice sharing" in f["statement"] for f in out["opportunities_for_us"])
+    # Not mentioned is not absent: silence about our differentiator is never an "opportunity" (it is an unknown).
+    assert not any("WhatsApp invoice sharing" in f["statement"] for f in out["opportunities_for_us"])
     # Monthly webinar is explicitly stated → observed cadence with a reference.
     assert out["posting_cadence"] and out["posting_cadence"][0]["refs"] == ["E1"]
     for section in FINDING_SECTIONS:

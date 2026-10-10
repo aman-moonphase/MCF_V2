@@ -4,7 +4,9 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.content_types import CONTENT_TYPES, normalize_content_type
-from app.core.workflow import WORKFLOW_STAGES, LOCKED_STAGE_STATUS, is_known_stage, stage_order
+from app.ai.platform_policy import generation_support
+from app.core.workflow import (LOCKED_STAGE_STATUS, is_known_stage, stage_order, stages_for, uses_product_workflow,
+                               visible_stage_types)
 from app.repositories.workflow_stage_repo import WorkflowStageRepository
 from app.services.project_service import ProjectService
 from app.schemas.workflow_stage import WorkflowStageCreate, WorkflowStageUpdate
@@ -43,6 +45,8 @@ class WorkflowStageService:
 
         _validate_stage_data(stage_type, stage_in)
         await self._apply_strategy_to_content_type(project, stage_type, stage_in)
+        await self._require_approved_post(project, stage_type, stage_in)
+        await self._require_current_evaluation(project, stage_type, stage_in)
         existing_stage = await self.repo.get_by_project_and_type(project_id, stage_type)
 
         if existing_stage:
@@ -73,6 +77,32 @@ class WorkflowStageService:
 
         return updated_stage
 
+    async def _require_current_evaluation(self, project, stage_type: str, stage_in: WorkflowStageUpdate) -> None:
+        """Product workflow with Evaluate & Improve: completing it, or entering Review Approval, needs an evaluation
+        of the CURRENT saved post version. Projects without that stage (legacy, completed earlier) are unaffected."""
+        leaving_evaluation = stage_type == "evaluate-improve" and stage_in.status == "Completed"
+        entering_review = stage_type == "review-approval" and stage_in.status in ("In Progress", "Completed")
+        if not (leaving_evaluation or entering_review):
+            return
+        from app.services.evaluation_service import require_current_evaluation
+
+        problem = await require_current_evaluation(self.session, project)
+        if problem:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
+
+    async def _require_approved_post(self, project, stage_type: str, stage_in: WorkflowStageUpdate) -> None:
+        """Product workflow: Review Approval is only Completed by approving the saved post (never by a status change)."""
+        if stage_type != "review-approval" or stage_in.status != "Completed":
+            return
+        existing = {s.stage_type for s in await self.repo.get_all_by_project(project.id)}
+        if not uses_product_workflow(existing):
+            return  # legacy projects keep their generic approve step
+        from app.services.generation_service import GenerationService
+
+        if not await GenerationService(self.session, self.project_service.repo.user_id).has_current_approval(project):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Approve the saved post in Review Approval before completing this stage.")
+
     async def _apply_strategy_to_content_type(self, project, stage_type: str, stage_in: WorkflowStageUpdate) -> None:
         """For product-workflow projects, the content type can only be approved after the Promotion Strategy.
         Choosing a different type than the strategy recommends is allowed, but recorded explicitly."""
@@ -93,12 +123,15 @@ class WorkflowStageService:
         stage_in.data["strategy_recommended_type"] = recommended
         stage_in.data["strategy_version"] = strategy.version
         stage_in.data["overrides_strategy"] = approved != recommended
+        # Any of the six types may be chosen; only some can be generated in this version (platform_policy).
+        stage_in.data["generation_supported"] = generation_support(approved) is None
 
     async def get_stages(self, project_id: UUID) -> List[WorkflowStage]:
         # Verify project exists
         await self.project_service.get_project(project_id)
         stages = await self.repo.get_all_by_project(project_id)
-        return sorted(stages, key=lambda stage: stage_order(stage.stage_type))
+        visible = visible_stage_types([stage.stage_type for stage in stages])
+        return sorted((s for s in stages if s.stage_type in visible), key=lambda stage: stage_order(stage.stage_type))
 
     async def get_stage(self, project_id: UUID, stage_type: str) -> WorkflowStage:
         await self.project_service.get_project(project_id)
@@ -108,13 +141,14 @@ class WorkflowStageService:
         return stage
 
     async def ensure_project_stages(self, project_id: UUID) -> List[WorkflowStage]:
-        """Create any canonical stage rows the project is missing (as Locked). Idempotent.
+        """Create any stage rows of the project's workflow it is missing (as Locked). Idempotent.
 
-        For use by data migrations when a new stage is added to WORKFLOW_STAGES.
+        For use by data migrations when a new stage is added to WORKFLOW_STAGES. A legacy project
+        only gets legacy stages; a product-workflow project only gets product-workflow stages.
         """
         await self.project_service.get_project(project_id)
         existing = {stage.stage_type for stage in await self.repo.get_all_by_project(project_id)}
-        for stage in WORKFLOW_STAGES:
+        for stage in stages_for(existing):
             if stage.key not in existing:
                 await self.repo.create(project_id, WorkflowStageCreate(stage_type=stage.key, status=LOCKED_STAGE_STATUS))
         return await self.get_stages(project_id)

@@ -17,6 +17,34 @@ from ...api.deps import get_current_user
 from ...models.user import User
 
 router = APIRouter()
+
+
+@router.get("/mode", response_model=Dict[str, Any])
+async def get_ai_mode(current_user: User = Depends(get_current_user)):
+    """Which AI mode generation actions will use, from configuration only. Contains no secrets, makes no
+    external call, and never claims a verified connection."""
+    from ...ai.config import claude_model_problem, normalize_provider_name
+    from ...core.config import settings
+    from ...ai.usage import CLAUDE_RATES
+
+    provider = normalize_provider_name(settings.AI_PROVIDER)
+    if provider == "demo":
+        return {"mode": "demo", "provider": "demo", "model": None, "configured": True, "configuration_problem": None,
+                "may_incur_charges": False, "connection_verified": False, "cost_estimates_available": False,
+                "single_attempt": settings.AI_SINGLE_ATTEMPT}
+    if provider == "claude":
+        model = settings.CLAUDE_MODEL
+        problem = (None if (settings.ANTHROPIC_API_KEY or "").strip() else "ANTHROPIC_API_KEY is not set.") or claude_model_problem(model)
+        rates_known = model in CLAUDE_RATES
+    elif provider == "openai":
+        model = settings.AI_MODEL_NAME
+        problem = None if (settings.OPENAI_API_KEY or "").strip() else "OPENAI_API_KEY is not set."
+        rates_known = False
+    else:
+        model, problem, rates_known = None, f"Unsupported AI_PROVIDER '{provider}'.", False
+    return {"mode": "real", "provider": provider, "model": model, "configured": problem is None,
+            "configuration_problem": problem, "may_incur_charges": True, "connection_verified": False,
+            "cost_estimates_available": rates_known, "single_attempt": settings.AI_SINGLE_ATTEMPT}
 orchestrator = AIOrchestrator()
 
 

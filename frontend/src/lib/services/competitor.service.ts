@@ -29,6 +29,8 @@ export interface CompetitorAnalysis {
   opportunitiesForUs: Finding[];
   coverage: Record<string, 'observed' | 'inferred' | 'unknown'>;
   unknowns: string[];
+  /** Section keys with no findings (shown as empty sections, never as unknown items). */
+  unknownSections?: string[];
   performanceData: string;
   confidence: 'low' | 'medium' | 'high';
   references: Record<string, Reference>;

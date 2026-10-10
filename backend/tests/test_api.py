@@ -101,20 +101,20 @@ async def test_create_and_read_stage(authenticated_client: AsyncClient):
     project_id = p_res.json()["id"]
     
     stage_data = {
-        "stage_type": "content-selection",
+        "stage_type": "content-type",
         "status": "In Progress",
         "data": {"key": "value"}
     }
     
     # Create / Update stage
-    s_res = await authenticated_client.put(f"/api/projects/{project_id}/stages/content-selection", json=stage_data)
+    s_res = await authenticated_client.put(f"/api/projects/{project_id}/stages/content-type", json=stage_data)
     assert s_res.status_code == 200
     assert s_res.json()["status"] == "In Progress"
     
     # Read single stage
-    read_s_res = await authenticated_client.get(f"/api/projects/{project_id}/stages/content-selection")
+    read_s_res = await authenticated_client.get(f"/api/projects/{project_id}/stages/content-type")
     assert read_s_res.status_code == 200
-    assert read_s_res.json()["stage_type"] == "content-selection"
+    assert read_s_res.json()["stage_type"] == "content-type"
 
     # Read all stages
     read_all_s_res = await authenticated_client.get(f"/api/projects/{project_id}/stages")
@@ -122,7 +122,7 @@ async def test_create_and_read_stage(authenticated_client: AsyncClient):
     stages = read_all_s_res.json()
     assert isinstance(stages, list)
     assert len(stages) >= 1
-    assert any(s["stage_type"] == "content-selection" for s in stages)
+    assert any(s["stage_type"] == "content-type" for s in stages)
 
 @pytest.mark.asyncio
 async def test_invalid_stage(authenticated_client: AsyncClient):

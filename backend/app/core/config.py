@@ -13,6 +13,10 @@ _DEVELOPMENT_ENVS = {"development", "dev", "local", "test", "demo"}
 _MIN_SECRET_KEY_LENGTH = 32
 
 
+# Default Claude model: the latest Sonnet listed in Anthropic's models overview (a documented Claude API ID).
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
+
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Multimodal Content Factory API"
     API_V1_STR: str = "/api"
@@ -45,6 +49,9 @@ class Settings(BaseSettings):
     AI_PROVIDER: str = "demo"
     AI_TEMPERATURE: float = 0.7
     AI_TIMEOUT_SECONDS: float = 120.0
+    # Single-attempt mode for controlled real-AI tests: no application-level generation retries and no SDK
+    # retries, so one user action makes at most one provider request per AI step. Off = normal retries.
+    AI_SINGLE_ATTEMPT: bool = False
     # Maximum characters of the project's source text placed directly in a prompt.
     # Longer sources are still fully stored and reachable through RAG; the prompt states the cut.
     AI_MAX_SOURCE_CHARS: int = 60000
@@ -55,10 +62,16 @@ class Settings(BaseSettings):
 
     # Claude (Anthropic). The key is only ever read on the backend.
     ANTHROPIC_API_KEY: str | None = None
-    CLAUDE_MODEL: str = "claude-opus-5-5"
+    # Claude API model ID, sent to the API exactly as written (no fallback). Default: DEFAULT_CLAUDE_MODEL.
+    # Other documented IDs can be set explicitly, e.g. claude-opus-5-5, claude-opus-5, claude-sonnet-5.
+    CLAUDE_MODEL: str = DEFAULT_CLAUDE_MODEL
     CLAUDE_MAX_TOKENS: int = 16000
     # Claude effort level: low | medium | high | xhigh | max
     CLAUDE_EFFORT: str = "medium"
+
+    # Output policy for generated LinkedIn posts (app/ai/platform_policy.py)
+    LINKEDIN_POST_MAX_CHARS: int = 3000
+    LINKEDIN_HOOK_MAX_CHARS: int = 210
 
     # Embeddings: "demo" or "openai". Defaults to "openai" only when AI_PROVIDER is "openai".
     EMBEDDING_PROVIDER: str | None = None

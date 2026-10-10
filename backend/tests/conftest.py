@@ -78,6 +78,29 @@ async def setup_test_database():
     await test_engine.dispose()
 
 @pytest.fixture(autouse=True)
+def hermetic_ai_settings(monkeypatch):
+    """Never call a real AI provider from tests.
+
+    backend/.env may select a real provider (AI_PROVIDER=claude) and hold a real API key. Every test starts in
+    Demo Mode with no provider keys and normal retry settings; tests that exercise Claude/OpenAI patch in fake
+    clients or providers explicitly.
+    """
+    monkeypatch.setattr(settings, "AI_PROVIDER", "demo")
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", None)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", None)
+    monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", None)
+    monkeypatch.setattr(settings, "AI_SINGLE_ATTEMPT", False)
+
+    # Belt and braces: a real Anthropic SDK HTTP request can never leave a test.
+    import anthropic._base_client as anthropic_client
+
+    async def no_real_requests(*args, **kwargs):
+        raise AssertionError("A test attempted a real Anthropic API request.")
+
+    monkeypatch.setattr(anthropic_client.AsyncAPIClient, "request", no_real_requests)
+
+
+@pytest.fixture(autouse=True)
 def smtp_outbox(monkeypatch):
     """Never send real email from tests.
 

@@ -508,6 +508,7 @@ class DemoProvider(BaseAIProvider):
         from .demo_competitor import build_demo_comparison, build_demo_competitor_analysis
         from .demo_product import build_demo_profile, build_demo_questions
         from .demo_strategy import build_demo_strategy
+        from .demo_generation import build_demo_linkedin_post
 
         product_builders = {
             "ProductProfileDraft": build_demo_profile,
@@ -515,6 +516,7 @@ class DemoProvider(BaseAIProvider):
             "CompetitorAnalysisOutput": build_demo_competitor_analysis,
             "ComparisonOutput": build_demo_comparison,
             "PromotionStrategyOutput": build_demo_strategy,
+            "LinkedInPostOutput": build_demo_linkedin_post,
         }
         if schema.__name__ == "CompetitorSuggestionsOutput":
             # Demo Mode never invents competitor companies.

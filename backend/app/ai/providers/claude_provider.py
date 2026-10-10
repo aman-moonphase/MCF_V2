@@ -1,7 +1,12 @@
-from typing import Any, Type
+import time
+from typing import Any, Optional, Type
 
 from pydantic import BaseModel
 
+from app.core.config import DEFAULT_CLAUDE_MODEL
+
+from ..generation_context import get_generation_context
+from ..usage import estimate_cost_usd, record_usage
 from .base import AIProviderError, BaseAIProvider
 from ..prompts import PROVIDER_SYSTEM_PROMPT
 
@@ -18,19 +23,21 @@ class ClaudeProvider(BaseAIProvider):
     def __init__(
         self,
         api_key: str,
-        model_name: str = "claude-opus-5-5",
+        model_name: str = DEFAULT_CLAUDE_MODEL,
         max_tokens: int = 16000,
         effort: str | None = "medium",
         timeout: float = 120.0,
         client: Any = None,
+        max_retries: int = 2,
     ):
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY is required when using the 'claude' provider.")
         if client is None:
             import anthropic
 
-            # The SDK itself retries 408/409/429/5xx and connection errors (max_retries).
-            client = anthropic.AsyncAnthropic(api_key=api_key, timeout=timeout, max_retries=2)
+            # The SDK itself retries 408/409/429/5xx and connection errors, up to max_retries times
+            # (0 in single-attempt mode: see app/ai/nodes/common.py::sdk_max_retries).
+            client = anthropic.AsyncAnthropic(api_key=api_key, timeout=timeout, max_retries=max_retries)
         self.client = client
         self.model_name = model_name
         self.max_tokens = max_tokens
@@ -69,6 +76,39 @@ class ClaudeProvider(BaseAIProvider):
         return text
 
     async def _call(self, method, **kwargs):
+        """One API request. Its metadata (never the prompt or response) is recorded for usage tracking."""
+        started = time.perf_counter()
+        try:
+            response = await self._request(method, **kwargs)
+        except Exception as e:
+            self._record(started, status="error", error_type=type(e).__name__)
+            raise
+        self._record(started, status="ok", usage=getattr(response, "usage", None),
+                     stop_reason=getattr(response, "stop_reason", None))
+        return response
+
+    def _record(self, started: float, status: str, usage: Any = None, stop_reason: Optional[str] = None,
+                error_type: Optional[str] = None) -> None:
+        ctx = get_generation_context() or {}
+        tokens = {k: getattr(usage, k, None) for k in ("input_tokens", "output_tokens",
+                                                         "cache_creation_input_tokens", "cache_read_input_tokens")}
+        tokens = {k: v if isinstance(v, int) else None for k, v in tokens.items()}  # only what the API reported
+        record_usage({
+            "provider": PROVIDER_NAME,
+            "model": self.model_name,
+            "stage": ctx.get("stage"),
+            "attempt": (ctx.get("retries") or 0) + 1,
+            "status": status,
+            **tokens,
+            "duration_ms": round((time.perf_counter() - started) * 1000),
+            "stop_reason": stop_reason,
+            "error_type": error_type,
+            "estimated_cost_usd": estimate_cost_usd(
+                self.model_name, tokens["input_tokens"], tokens["output_tokens"],
+                tokens["cache_creation_input_tokens"], tokens["cache_read_input_tokens"]) if status == "ok" else None,
+        })
+
+    async def _request(self, method, **kwargs):
         import anthropic
 
         try:

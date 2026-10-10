@@ -7,3 +7,5 @@ from app.models.user import User  # noqa
 from app.models.product import Product  # noqa
 from app.models.competitor import Competitor, CompetitorEvidence  # noqa
 from app.models.promotion_strategy import PromotionStrategy  # noqa
+from app.models.generated_content import GeneratedContent  # noqa
+from app.models.content_evaluation import ContentEvaluation  # noqa

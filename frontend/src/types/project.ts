@@ -10,6 +10,8 @@ export type KnownWorkflowStageType =
   | 'competitor-analysis'
   | 'promotion-strategy'
   | 'content-type'
+  | 'generate-content'
+  | 'evaluate-improve'
   | 'content-selection'
   | 'platform-strategy'
   | 'topic-angle'

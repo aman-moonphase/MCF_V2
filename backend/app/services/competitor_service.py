@@ -27,6 +27,9 @@ from app.models.product import Product
 from app.models.workflow_stage import WorkflowStage
 from app.services.competitor_intelligence import intelligence_providers
 from app.services.extraction_service import ExtractionService
+from app.core.text_encoding import repair_mojibake
+from app.ai.competitor_grounding import EVIDENCE_GAP_PREFIX
+from app.ai.providers.demo_competitor import _mentioned
 from app.services.product_service import ProductService
 
 STAGE_KEY = "competitor-analysis"
@@ -60,6 +63,7 @@ def _insufficient_analysis() -> dict:
         **{s: [] for s in FINDING_SECTIONS},
         "content_examples": [],
         "coverage": coverage,
+        "unknown_sections": list(coverage),
         "unknowns": [
             "No evidence yet. Add the competitor's website URL, paste observations (e.g. posts or ads you have seen), "
             "upload a PDF, or describe their product."
@@ -68,6 +72,42 @@ def _insufficient_analysis() -> dict:
         "confidence": "low",
         "references": {},
     }
+
+
+def _unresolved_features(product: Product, competitor: Competitor) -> List[str]:
+    """Feature comparisons the supplied evidence does not settle. Unresolved is not absent."""
+    covered = " ".join(f["statement"] for f in (competitor.analysis or {}).get("overlapping_features") or []).lower()
+    return [f"{competitor.name}: the supplied evidence does not establish whether {competitor.name} offers something like "
+            f"our \"{feature}\". This comparison is unresolved (not evidence that the feature is absent) — add their "
+            "feature list, help pages or pricing page to settle it."
+            for feature in (product.profile or {}).get("key_features") or [] if feature.lower() not in covered]
+
+
+def _evidence_gaps(product: Product, name: str, analysis: dict, evidence_text: str) -> List[str]:
+    """Unknowns for OUR features and differentiators the supplied evidence does not show.
+
+    Not shown is not absent: each is an unknown, and a differentiator is only a messaging angle to
+    investigate (a hypothesis), never a confirmed competitor weakness. One line per item, no duplicates.
+    """
+    profile = product.profile or {}
+    covered = " ".join(f["statement"] for f in analysis.get("overlapping_features") or []).lower()
+    differentiators = [d for d in profile.get("differentiators") or [] if d]
+    hypothesis = (" Messaging angle to investigate (hypothesis, not a confirmed weakness): it is one of our "
+                  "differentiators — verify before positioning against " + name + ".")
+    lines, used = [], set()
+    for feature in profile.get("key_features") or []:
+        if feature.lower() in covered:
+            continue
+        line = f"Whether {name} offers something like our \"{feature}\" is unknown: the supplied evidence does not show it."
+        linked = [d for d in differentiators if feature.lower() in d.lower() or d.lower() in feature.lower()]
+        if linked:
+            used.update(linked)
+            line += hypothesis
+        lines.append(line)
+    for d in differentiators:
+        if d not in used and not _mentioned(d, evidence_text):
+            lines.append(f"The supplied evidence for {name} does not mention our differentiator \"{d}\"." + hypothesis)
+    return lines
 
 
 class CompetitorService:
@@ -300,7 +340,7 @@ class CompetitorService:
         items = []
         for i, e in enumerate([e for e in evidence if e.status == "completed" and (e.content or "").strip()], start=1):
             items.append({"label": f"E{i}", "kind": e.evidence_type, "evidence_id": str(e.id), "title": e.title,
-                          "url": e.source_url, "text": e.content})
+                          "url": e.source_url, "text": repair_mojibake(e.content)})
         if competitor.description:
             items.append({"label": "D", "kind": "user_description", "evidence_id": None, "title": "Your description", "url": None, "text": competitor.description})
         if competitor.notes:
@@ -348,6 +388,12 @@ class CompetitorService:
 
         analysis["references"] = references
         analysis["provider"] = normalize_provider_name(settings.AI_PROVIDER)
+        gaps = _evidence_gaps(product, competitor.name, analysis, " ".join(i["text"] for i in items))
+        # A provider's own evidence-gap note about the same feature is replaced by the single line above.
+        existing = [u for u in analysis.get("unknowns") or []
+                    if not (u.startswith(EVIDENCE_GAP_PREFIX) and any(f'"{f.lower()}"' in u.lower() for f in
+                                                                      (product.profile or {}).get("key_features") or []))]
+        analysis["unknowns"] = existing + gaps
         competitor.analysis = analysis
         competitor.analysis_status = "analyzed"
         competitor.analysis_error = None
@@ -389,6 +435,8 @@ class CompetitorService:
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=f"Competitor comparison failed: {e}")
 
+        unresolved = [line for c in analyzed for line in _unresolved_features(product, c)]
+        comparison["evidence_needed"] = unresolved + [e for e in comparison.get("evidence_needed") or [] if e not in unresolved]
         comparison.update(competitors=competitors_map, references=references,
                           provider=normalize_provider_name(settings.AI_PROVIDER))
         product.competitor_comparison = comparison

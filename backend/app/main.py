@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db import base as _orm_models  # noqa: F401  (registers every ORM model so string relationships resolve)
-from app.api.routes import projects, workflow_stages, health, ai, sources, schedules, diagnostics, auth, products, competitors, strategy
+from app.api.routes import projects, workflow_stages, health, ai, sources, schedules, diagnostics, auth, products, competitors, strategy, generation, evaluation
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -27,6 +27,8 @@ app.include_router(products.project_router, prefix=f"{settings.API_V1_STR}/proje
 app.include_router(products.router, prefix=f"{settings.API_V1_STR}/products", tags=["products"])
 app.include_router(competitors.router, prefix=f"{settings.API_V1_STR}/products", tags=["competitors"])
 app.include_router(strategy.router, prefix=f"{settings.API_V1_STR}/products", tags=["promotion-strategy"])
+app.include_router(generation.router, prefix=f"{settings.API_V1_STR}/projects", tags=["generate-content"])
+app.include_router(evaluation.router, prefix=f"{settings.API_V1_STR}/projects", tags=["evaluate-improve"])
 app.include_router(ai.router, prefix=f"{settings.API_V1_STR}/ai", tags=["ai"])
 app.include_router(schedules.router, prefix=f"{settings.API_V1_STR}/schedules", tags=["schedules"])
 app.include_router(diagnostics.router, prefix=f"{settings.API_V1_STR}/diagnostics", tags=["diagnostics"])

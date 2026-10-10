@@ -4,6 +4,19 @@ import pypdf
 import requests
 from bs4 import BeautifulSoup
 
+def _html_markup(response):
+    """The markup to parse: text when the server declared a charset, raw bytes otherwise.
+
+    `response.text` falls back to ISO-8859-1 when the Content-Type header has no charset, which turns
+    UTF-8 pages into mojibake ("I’m" -> "Iâ\x80\x99m"). Without a declared charset, hand BeautifulSoup the
+    raw bytes so it honours the page's <meta charset> / BOM and otherwise detects UTF-8.
+    """
+    content_type = (response.headers.get("Content-Type") or "").lower()
+    if "charset=" in content_type:
+        return response.text
+    return response.content
+
+
 class ExtractionResult:
     def __init__(self, text: str, metadata: Dict[str, Any]):
         self.text = text
@@ -63,7 +76,7 @@ class ExtractionService:
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Failed to fetch URL: {str(e)}")
             
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(_html_markup(response), 'html.parser')
         
         # Remove script, style, header, footer, nav tags
         for element in soup(["script", "style", "header", "footer", "nav", "aside"]):

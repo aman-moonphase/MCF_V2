@@ -2,7 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.workflow import WORKFLOW_STAGES, initial_status
+from app.core.workflow import initial_status, product_workflow_stages
 from app.repositories.project_repo import ProjectRepository
 from app.schemas.project import ProjectCreate, ProjectUpdate
 from app.models.project import Project
@@ -20,8 +20,9 @@ class ProjectService:
         project = await self.repo.create(project_in)
 
         stage_repo = WorkflowStageRepository(self.repo.session)
-        # One row per stage in the canonical workflow definition (app/core/workflow.py).
-        for index, stage in enumerate(WORKFLOW_STAGES):
+        # One row per stage of the product workflow (app/core/workflow.py). Legacy-only stages
+        # (content-selection … final-script) are not created for new projects.
+        for index, stage in enumerate(product_workflow_stages()):
             stage_in = WorkflowStageCreate(stage_type=stage.key, status=initial_status(index))
             await stage_repo.create(project.id, stage_in)
 

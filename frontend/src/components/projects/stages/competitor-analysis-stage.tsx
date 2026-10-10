@@ -18,7 +18,7 @@ interface Props {
   onComplete: () => Promise<void> | void;
 }
 
-const SECTIONS: { key: keyof CompetitorAnalysis; coverageKey: string; label: string }[] = [
+const SECTIONS: { key: keyof CompetitorAnalysis; coverageKey: string; label: string; empty?: string }[] = [
   { key: 'overview', coverageKey: 'overview', label: 'Overview' },
   { key: 'positioning', coverageKey: 'positioning', label: 'Positioning & value proposition' },
   { key: 'targetAudience', coverageKey: 'target_audience', label: 'Target audience' },
@@ -28,7 +28,8 @@ const SECTIONS: { key: keyof CompetitorAnalysis; coverageKey: string; label: str
   { key: 'contentFormats', coverageKey: 'content_formats', label: 'Content formats' },
   { key: 'postingCadence', coverageKey: 'posting_cadence', label: 'Posting cadence' },
   { key: 'strengths', coverageKey: 'strengths', label: 'Strengths & differentiators' },
-  { key: 'opportunitiesForUs', coverageKey: 'opportunities_for_us', label: 'Opportunities for our product' },
+  { key: 'opportunitiesForUs', coverageKey: 'opportunities_for_us', label: 'Opportunities for our product — suggestions, not facts',
+    empty: 'No evidence-based opportunities yet: nothing in the supplied evidence points to one. See the evidence gaps below for what to investigate.' },
 ];
 
 const VERIFICATION: Record<Competitor['verification'], { label: string; className: string }> = {
@@ -54,7 +55,7 @@ const STATE_BADGE: Record<string, { label: string; className: string }> = {
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const inputClass = 'w-full text-sm bg-background border border-border/50 rounded-xl p-3 focus:outline-none focus:ring-1 focus:ring-primary';
-const pillButton = 'inline-flex items-center gap-2 h-9 px-4 rounded-full text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed';
+const pillButton = 'inline-flex items-center gap-2 h-9 px-4 rounded-full text-sm font-medium whitespace-nowrap transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 
 function RefChips({ refs, references }: { refs: string[]; references: Record<string, Reference> }) {
   if (!refs.length) return null;
@@ -94,8 +95,12 @@ function FindingList({ findings, references }: { findings: Finding[]; references
 
 function AnalysisView({ analysis }: { analysis: CompetitorAnalysis }) {
   const refs = analysis.references || {};
-  const known = SECTIONS.filter((s) => (analysis[s.key] as Finding[])?.length);
-  const unknown = SECTIONS.filter((s) => !(analysis[s.key] as Finding[])?.length);
+  // Every section keeps its own heading; an empty one shows an empty state under it. The evidence-gaps box
+  // lists only specific unknown items (older analyses also stored per-section "not supported" lines and
+  // section names there; those are skipped because the sections already say so).
+  const sectionLabels = new Set(SECTIONS.map((s) => s.label.toLowerCase()));
+  const gaps = (analysis.unknowns || []).filter((u) =>
+    !u.includes('not supported by the available evidence') && !sectionLabels.has(u.trim().toLowerCase()));
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -104,12 +109,17 @@ function AnalysisView({ analysis }: { analysis: CompetitorAnalysis }) {
           <span className="px-2 py-0.5 rounded-full border border-border/50 bg-muted">Demo mode: extracted from your evidence, not AI research</span>
         )}
       </div>
-      {known.map((s) => (
-        <div key={s.key} className="space-y-1.5">
-          <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{s.label}</h5>
-          <FindingList findings={analysis[s.key] as Finding[]} references={refs} />
-        </div>
-      ))}
+      {SECTIONS.map((s) => {
+        const findings = (analysis[s.key] as Finding[]) || [];
+        return (
+          <div key={s.key} className="space-y-1.5">
+            <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{s.label}</h5>
+            {findings.length > 0
+              ? <FindingList findings={findings} references={refs} />
+              : <p className="text-sm italic text-muted-foreground">{s.empty || 'Unknown: the supplied evidence does not show this.'}</p>}
+          </div>
+        );
+      })}
       {analysis.contentExamples?.length > 0 && (
         <div className="space-y-1.5">
           <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Content examples</h5>
@@ -122,12 +132,15 @@ function AnalysisView({ analysis }: { analysis: CompetitorAnalysis }) {
         </div>
       )}
       <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-4 space-y-2">
-        <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Unknown — not supported by the evidence</h5>
-        {unknown.length > 0 && <p className="text-sm text-muted-foreground">{unknown.map((s) => s.label).join(' · ')}</p>}
+        <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Unknown / evidence gaps — not shown by the supplied evidence (not proof of absence)</h5>
+        {gaps.length > 0 ? (
+          <ul className="space-y-1.5 list-disc pl-4">
+            {gaps.map((u) => <li key={u} className="text-sm text-muted-foreground">{u}</li>)}
+          </ul>
+        ) : (
+          <p className="text-sm italic text-muted-foreground">No specific evidence gaps recorded.</p>
+        )}
         <p className="text-sm text-muted-foreground">{analysis.performanceData}</p>
-        {analysis.unknowns.filter((u) => !u.includes('not supported by the available evidence')).map((u) => (
-          <p key={u} className="text-sm text-muted-foreground">{u}</p>
-        ))}
       </div>
       {Object.keys(refs).length > 0 && (
         <div className="space-y-1">
@@ -322,18 +335,20 @@ export function CompetitorAnalysisStage({ project, activeStage, onComplete }: Pr
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-12">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sticky top-0 bg-background/80 backdrop-blur-md py-4 z-20 border-b border-border/50">
-        <div>
+      {/* Title and actions share one wrapping row: the title takes the remaining width (min 18rem) and the
+          action group wraps below it, and its buttons wrap among themselves, instead of squeezing the title. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sticky top-0 bg-background/80 backdrop-blur-md py-4 z-20 border-b border-border/50">
+        <div className="min-w-0 flex-[1_1_18rem]">
           <div className="flex items-center gap-3 flex-wrap">
             <h3 className="text-xl font-bold text-foreground">Competitor Analysis</h3>
-            {badge && <span className={cn('px-3 py-1 rounded-full text-xs font-medium border', badge.className)}>{badge.label}</span>}
+            {badge && <span className={cn('px-3 py-1 rounded-full text-xs font-medium border whitespace-nowrap', badge.className)}>{badge.label}</span>}
             {state.limitedEvidence && (
-              <span className="px-3 py-1 rounded-full text-xs font-medium border bg-amber-500/10 text-amber-500 border-amber-500/20">Limited evidence</span>
+              <span className="px-3 py-1 rounded-full text-xs font-medium border whitespace-nowrap bg-amber-500/10 text-amber-500 border-amber-500/20">Limited evidence</span>
             )}
           </div>
-          <p className="text-sm text-muted-foreground">Evidence you supply → observed, inferred, or unknown. Nothing is researched or invented behind the scenes.</p>
+          <p className="text-sm text-muted-foreground mt-1">Evidence you supply → observed, inferred, or unknown. Nothing is researched or invented behind the scenes.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap shrink-0">
+        <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
           <button onClick={discover} disabled={!!busy} className={cn(pillButton, 'bg-muted text-foreground')}>
             {busy === 'discover' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}Find candidates
           </button>
@@ -366,7 +381,7 @@ export function CompetitorAnalysisStage({ project, activeStage, onComplete }: Pr
       </div>
 
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h4 className="text-sm font-semibold tracking-widest uppercase text-primary">Competitors ({state.competitors.length})</h4>
           <button onClick={() => setShowAdd((v) => !v)} className={cn(pillButton, 'bg-foreground text-background')}><Plus className="w-4 h-4" />Add competitor</button>
         </div>

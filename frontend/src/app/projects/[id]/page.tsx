@@ -66,7 +66,10 @@ export default function ProjectWorkspace() {
         setActiveStageId(nextStage.id);
       }
     } else {
-      await ProjectService.updateWorkflowStage(project.id, activeStageId, { status: 'Completed' });
+      // The stage update can be refused (e.g. Review Approval without an approved post): then the project
+      // is not completed either. The refusal was already shown as a toast.
+      const completed = await ProjectService.updateWorkflowStage(project.id, activeStageId, { status: 'Completed' });
+      if (!completed) return;
       const finalProject = await ProjectService.updateProjectStatus(project.id, 'Completed');
       setProject(finalProject);
     }
@@ -173,6 +176,7 @@ export default function ProjectWorkspace() {
           project={project}
           activeStage={activeStage}
           onAdvanceStage={handleAdvanceStage}
+          onSelectStage={handleStageSelect}
         />
       </div>
 

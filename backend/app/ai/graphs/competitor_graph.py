@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from ..competitor_schemas import (
     ComparisonOutput, CompetitorAnalysisOutput, CompetitorState, CompetitorSuggestionsOutput,
 )
-from ..nodes.common import MAX_RETRIES, call_structured, generation_failure, retry_feedback
+from ..nodes.common import call_structured, generation_failure, max_attempts, retry_feedback
 from ..prompts import build_stage_prompt
 from ..providers.factory import get_configured_provider as get_provider
 
@@ -30,6 +30,8 @@ Rules:
 - Never invent numbers, rankings, prices, schedules, customer counts, or statistics.
 - `content_examples.excerpt` must be copied verbatim from the cited evidence.
 - `overlapping_features` and `opportunities_for_us` compare against OUR approved Product Profile.
+- `opportunities_for_us` are SUGGESTIONS motivated by what the evidence SHOWS. Absence from the evidence is not
+  evidence of absence: never present "the evidence does not mention X" as an opportunity or a competitor weakness.
 """
 
 COMPARISON_INSTRUCTIONS = """
@@ -52,7 +54,7 @@ relevant. Do not include our own product or the competitors already listed. Do n
 
 def _build_graph(schema: Type[BaseModel], title: str, instructions: str, ground: Callable[[CompetitorState, dict], dict]):
     async def generate(state: CompetitorState) -> Dict[str, Any]:
-        if state.get("error") and state.get("retries", 0) >= MAX_RETRIES:
+        if state.get("error") and state.get("retries", 0) >= max_attempts():
             return {}
         prompt = build_stage_prompt(title, state.get("prompt_context") or [], instructions + retry_feedback(state))
         try:
@@ -68,7 +70,7 @@ def _build_graph(schema: Type[BaseModel], title: str, instructions: str, ground:
 
     def route(state: CompetitorState) -> str:
         if state.get("error"):
-            return "generate" if state.get("retries", 0) < MAX_RETRIES else END
+            return "generate" if state.get("retries", 0) < max_attempts() else END
         return "validate"
 
     builder = StateGraph(CompetitorState)

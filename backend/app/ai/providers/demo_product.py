@@ -1,7 +1,10 @@
 """Deterministic Demo Mode for Product Understanding.
 
-Extracts a Product Profile only from what the current project's source text states (labelled
-lines such as "Features: ...", "Target users: ...", "Pricing: ...", and the opening sentence).
+Extracts a Product Profile only from what the current project's source text states:
+- labels with the value on the same line ("Features: a, b, c") or as a heading with the value on the
+  following lines or as bullets ("Features:" then "- a" / "* b");
+- the description sentence ("X is a <category> for <audience>");
+- plain prose with explicit cues ("It includes a, b and c", "Unlike ...", "... instead of ...").
 Anything not stated stays empty, so the workflow asks the owner instead of inventing it.
 """
 
@@ -10,7 +13,7 @@ from typing import Dict, List, Optional
 
 from ..generation_context import get_generation_context
 from ..product_schemas import LIST_FIELDS, MAX_QUESTIONS
-from .demo_provider import _LABEL_PATTERN, _clean, _parse_source_from_prompt, _sentences, _shorten, _split_items
+from .demo_provider import _LABEL_PATTERN, _cap, _clean, _parse_source_from_prompt, _sentences, _shorten, _split_items
 
 # label keywords → profile field (a label matches if it contains the keyword)
 _LABEL_MAP = [
@@ -31,8 +34,76 @@ _LABEL_MAP = [
     ("description", ("description", "overview", "about")),
     ("name", ("product", "name", "brand")),
 ]
+_BULLET = re.compile(r"^\s*(?:[-*•–▪]|\d{1,2}[.)])\s+(.*)$")
+_LINE_LABEL = re.compile(r"^\s*(?:#{1,6}\s*)?[*_]{0,2}([A-Za-z][A-Za-z /&()'-]{1,40}?)[*_]{0,2}\s*:[*_]{0,2}\s*(.*)$")
+_FEATURE_CUE = re.compile(r"\b(?:offers|includes|provides|features|comes with|supports|you get)\s+(.+)$", re.I)
+_DIFFERENTIATOR_CUE = re.compile(
+    r"^unlike\b|\bthe only\b|\bsets? (?:it|us|\w+) apart\b|\bwhat makes (?:it|us|\w+) different\b|\bdifferentiat", re.I)
+_VALUE_CUE = re.compile(
+    r"\b(?:so (?:that )?\w+(?: \w+)? can|helps|lets|allows|enables|instead of|rather than)\b|, not \w+ing\b", re.I)
 _PROBLEM_CUES = re.compile(r"\b(hate|struggl\w*|wast\w*|overlook\w*|manual\w*|frustrat\w*|difficult|hard to|pain\w*|tedious|error-prone|miss\w*)\b", re.I)
 _URL = re.compile(r"(https?://[^\s,)]+|www\.[^\s,)]+)", re.I)
+
+
+def _field_for(label: str) -> Optional[str]:
+    label = label.strip().lower()
+    for field, keywords in _LABEL_MAP:
+        if any(k in label for k in keywords):
+            return field
+    return None
+
+
+def _label_blocks(source: str) -> Dict[str, dict]:
+    """Labels whose value sits on the following lines: a heading ("Features:") followed by prose or bullets
+    (blank lines allowed) up to the next label, or an inline label followed directly by bullet lines.
+
+    Returns {field: {"label", "lines", "bullets"}} for the first block of each field.
+    """
+    blocks: List[dict] = []
+    current: Optional[dict] = None
+    for raw in (source or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw.strip()
+        bullet = _BULLET.match(line)
+        label = None if bullet else _LINE_LABEL.match(line)
+        if label:
+            rest = label.group(2).strip()
+            current = {"label": label.group(1), "lines": [rest] if rest else [], "bullets": [], "heading": not rest}
+            blocks.append(current)
+        elif not line:
+            if current and not current["heading"]:
+                current = None  # an inline label only continues with bullets directly below it
+        elif current is not None:
+            if bullet:
+                current["bullets"].append(_clean(bullet.group(1)))
+            elif current["heading"]:
+                current["lines"].append(_clean(line))
+            else:
+                current = None
+    found: Dict[str, dict] = {}
+    for block in blocks:
+        if not block["heading"] and not block["bullets"]:
+            continue  # plain "Label: value" lines are handled sentence by sentence (see _labelled)
+        field = _field_for(block["label"])
+        if field and field not in found and (block["lines"] or block["bullets"]):
+            found[field] = block
+    return found
+
+
+def _list_items(text: str) -> List[str]:
+    """A prose value for a list field: separate sentences are separate items; a short comma list is split."""
+    sentences = [x for x in _sentences(text) if x]
+    if len(sentences) > 1:
+        return [_cap(x) for x in sentences]
+    parts = _split_items(text)
+    return parts if all(len(x.split()) <= 6 for x in parts) else [_cap(_clean(text).rstrip("."))]
+
+
+def _block_value(field: str, block: dict):
+    text = " ".join(block["lines"])
+    if field in LIST_FIELDS:
+        items = (_list_items(text) if text else []) + [_cap(b.rstrip(".")) for b in block["bullets"]]
+        return [i for i in dict.fromkeys(items) if i]
+    return _shorten("; ".join([x for x in [text] if x] + block["bullets"]), 300)
 
 
 def _labelled(source: str) -> Dict[str, str]:
@@ -58,6 +129,10 @@ def _opening(source: str) -> tuple[Optional[str], str, str]:
     label = _LABEL_PATTERN.match(first)
     if label and label.group(1).strip().lower() in ("product", "name", "brand", "product name"):
         first = label.group(2).strip()
+    # "StudioDesk is a booking app for …" — a capitalised name of 1-4 words, then "is a/an/the".
+    m = re.match(r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}) is ((?:an?|the) .+)$", first)
+    if m and m.group(1).split()[0].lower() not in ("it", "this", "our", "we", "the", "that"):
+        return m.group(1), f"{first}.", m.group(2)
     for separator in (" - ", " — ", " – ", ": "):
         if separator in first:
             head, rest = first.split(separator, 1)
@@ -66,28 +141,80 @@ def _opening(source: str) -> tuple[Optional[str], str, str]:
     return None, f"{first}.", first
 
 
+def _descriptor(description: str, name: Optional[str]) -> str:
+    """"StudioDesk is a booking app for ..." -> "a booking app for ..."."""
+    subject = rf"(?:{re.escape(name)}|it|this|our product)" if name else r"(?:it|this|our product)"
+    m = re.match(rf"^{subject}\s+is\s+(.+?)\.?$", _clean(description), re.I)
+    return m.group(1) if m else ""
+
+
+def _prose_fields(source: str, profile: Dict[str, object], name: Optional[str]) -> None:
+    """Fill still-empty fields from plain sentences with explicit cues. Never from anything weaker."""
+    used = set()
+    sentences = [x for x in _sentences(source) if not _LABEL_PATTERN.match(x)]
+    if not profile.get("description") and name:
+        for x in sentences:
+            if re.match(rf"^{re.escape(name)}\s+(?:is|helps|lets)\b", x):
+                profile["description"] = _shorten(x + ".", 300)
+                used.add(x)
+                break
+    if not profile.get("key_features"):
+        for x in sentences:
+            m = _FEATURE_CUE.search(x)
+            if m:
+                items = [_cap(_clean(i)) for i in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(1)) if _clean(i)]
+                if len(items) >= 2:
+                    profile["key_features"] = items
+                    used.add(x)
+                    break
+    if not profile.get("differentiators"):
+        for x in sentences:
+            if x not in used and _DIFFERENTIATOR_CUE.search(x):
+                profile["differentiators"] = [_shorten(x, 200)]
+                used.add(x)
+                break
+    if not profile.get("value_proposition"):
+        description = str(profile.get("description") or "").rstrip(".")
+        for x in sentences:
+            if x not in used and x != description and _VALUE_CUE.search(x):
+                profile["value_proposition"] = _shorten(x, 300)
+                break
+
+
 def build_demo_profile(prompt: str) -> dict:
     ctx = get_generation_context() or {}
     source = (ctx.get("input_text") or "").strip() or _parse_source_from_prompt(prompt)
     labelled = _labelled(source)
+    blocks = _label_blocks(source)
     name, description, descriptor = _opening(source)
 
     profile: Dict[str, object] = {}
+    for field, block in blocks.items():
+        profile[field] = _block_value(field, block)
     for field, body in labelled.items():
-        profile[field] = _split_items(body) if field in LIST_FIELDS else _shorten(body, 300)
+        if field not in profile:
+            profile[field] = _split_items(body) if field in LIST_FIELDS else _shorten(body, 300)
+    # "Target users: ..." names the people who use the product as well as the audience.
+    if not profile.get("primary_users") and profile.get("target_audience") and re.search(r"\btarget users?\s*:", source, re.I):
+        profile["primary_users"] = [str(profile["target_audience"]).rstrip(".")]
 
     if name and not profile.get("name"):
         profile["name"] = name
     if isinstance(profile.get("name"), str):
         profile["name"] = re.split(r" - | — | – ", profile["name"])[0].strip()
-    if description and not profile.get("description"):
+    product_name = profile.get("name") if isinstance(profile.get("name"), str) else name
+    _prose_fields(source, profile, product_name)
+    # The opening line is only a description when it says more than the product's name.
+    if description and not profile.get("description") and _clean(description).rstrip(".") != product_name:
         profile["description"] = _shorten(description, 300)
+    if profile.get("description") and (not descriptor or descriptor == product_name):
+        descriptor = _descriptor(str(profile["description"]), product_name) or descriptor
     if not profile.get("category") and descriptor:
         m = re.match(r"^(?:an?|the)\s+(.+?)\s+(?:for|that|which|to|built|designed|helping)\b", descriptor, re.I)
         if m:
             profile["category"] = _clean(m.group(1))
     if not profile.get("target_audience") and descriptor:
-        m = re.search(r"\bfor ([^.,;]{3,100}?)(?=\s+(?:that|which|who|to|with|by|so)\b|[.,;]|$)", descriptor)
+        m = re.search(r"\bfor ([^.,;]{3,100}?)(?=\s+(?:that|which|to|with|by|so)\b|[.,;]|$)", descriptor)
         if m:
             profile["target_audience"] = _clean(m.group(1))
     if not profile.get("market_geography") and descriptor:

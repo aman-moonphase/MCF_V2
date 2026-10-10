@@ -3,8 +3,9 @@
 import React from 'react';
 import { WorkflowStage, Project } from '@/types/project';
 import { Bot, Edit3, FileText, ArrowRight } from 'lucide-react';
-import { STAGE_COMPONENTS, hasDedicatedStageUI } from './stage-registry';
+import { hasDedicatedStageUI, stageComponentFor } from './stage-registry';
 import { getStageLabel } from '@/lib/workflow-stages';
+import { AiModeIndicator } from '@/components/ai-mode-indicator';
 import { ScheduleDialog } from '@/components/schedule-dialog';
 import { Calendar } from 'lucide-react';
 import {
@@ -18,9 +19,10 @@ interface WorkspaceContentProps {
   project: Project;
   activeStage: WorkflowStage;
   onAdvanceStage: () => Promise<void> | void;
+  onSelectStage?: (stageId: string) => void;
 }
 
-export function WorkspaceContent({ project, activeStage, onAdvanceStage }: WorkspaceContentProps) {
+export function WorkspaceContent({ project, activeStage, onAdvanceStage, onSelectStage }: WorkspaceContentProps) {
   const [isScheduleOpen, setIsScheduleOpen] = React.useState(false);
   const [isAdvancing, setIsAdvancing] = React.useState(false);
 
@@ -35,9 +37,9 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage }: Works
   };
 
   const renderStageContent = () => {
-    const StageComponent = STAGE_COMPONENTS[activeStage.type];
+    const StageComponent = stageComponentFor(project, activeStage.type);
     if (StageComponent) {
-      return <StageComponent project={project} activeStage={activeStage} onComplete={onAdvanceStage} />;
+      return <StageComponent project={project} activeStage={activeStage} onComplete={onAdvanceStage} onSelectStage={onSelectStage} />;
     }
 
     switch (activeStage.type) {
@@ -87,7 +89,7 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage }: Works
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-background overflow-hidden relative z-10">
+    <div className="flex-1 min-w-0 flex flex-col h-full bg-background overflow-hidden relative z-10">
       
       {/* Workspace Header */}
       <div className="flex items-center justify-between px-8 py-5 border-b border-border/50 glass-panel z-20">
@@ -98,6 +100,7 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage }: Works
           <h2 className="text-2xl font-bold tracking-tight text-foreground">
             {getStageLabel(activeStage)}
           </h2>
+          <div className="mt-2"><AiModeIndicator /></div>
         </div>
         
         <div className="flex items-center gap-3">
@@ -109,7 +112,7 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage }: Works
             {activeStage.status}
           </div>
           
-          {activeStage.status !== 'Completed' && !hasDedicatedStageUI(activeStage.type) && (
+          {activeStage.status !== 'Completed' && !hasDedicatedStageUI(activeStage.type, project) && (
             <button 
               onClick={handleAdvance}
               disabled={isAdvancing}

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.db.session import get_db
 from app.core.config import settings
-from app.ai.config import SUPPORTED_AI_PROVIDERS, normalize_provider_name
+from app.ai.config import SUPPORTED_AI_PROVIDERS, claude_model_problem, normalize_provider_name
 from app.schemas.diagnostics import (
     DiagnosticsResponse, 
     BackendDiagnostic, 
@@ -70,9 +70,13 @@ async def get_diagnostics(db: AsyncSession = Depends(get_db), current_user: User
         ai_msg = "OpenAI API Key is missing for production AI Provider"
     elif provider == "claude":
         model = settings.CLAUDE_MODEL
+        model_problem = claude_model_problem(settings.CLAUDE_MODEL)
         if not (settings.ANTHROPIC_API_KEY or "").strip():
             ai_status = "Not configured"
             ai_msg = "Anthropic API Key is missing for the Claude provider"
+        elif model_problem:
+            ai_status = "Not configured"
+            ai_msg = model_problem
     elif provider == "demo":
         model = "Deterministic demo (no model)"
 

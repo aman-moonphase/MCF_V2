@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.competitor_schemas import FINDING_SECTIONS, SECTION_LABELS
 from app.ai.config import normalize_provider_name
 from app.ai.graphs.strategy_graph import run_promotion_strategy
+from app.ai.platform_policy import MVP_CONTENT_TYPE, MVP_STRATEGY_NOTE, apply_mvp_content_type
 from app.ai.strategy_schemas import EDITABLE_SECTIONS, PromotionStrategyOutput
 from app.core.config import settings
 from app.models.competitor import Competitor
@@ -110,13 +111,15 @@ class StrategyService:
                                                                          "positioning_opportunities", "promotion_patterns_to_investigate",
                                                                          "evidence_needed")}, ensure_ascii=False, indent=1)))
             corpus.append(json.dumps(comparison, ensure_ascii=False))
+        context.append(("Output constraint", MVP_STRATEGY_NOTE))
         context.append(("Allowed references", ", ".join(allowed) or "(none)"))
         return {
             "prompt_context": context,
             "allowed_refs": allowed,
             "corpus": "\n".join(corpus),
             "meta": {"limited": limited},
-            "demo_input": {"product": product.profile or {}, "comparison": comparison, "competitors": demo_competitors, "limited": limited},
+            "demo_input": {"product": product.profile or {}, "comparison": comparison, "competitors": demo_competitors, "limited": limited,
+                           "mvp_content_type": MVP_CONTENT_TYPE},
             "_competitor_names": [c.name for c in analyzed],
         }
 
@@ -125,7 +128,7 @@ class StrategyService:
         context = await self._context(product)
         names = context.pop("_competitor_names")
         try:
-            output = await run_promotion_strategy(context)
+            output = apply_mvp_content_type(await run_promotion_strategy(context))
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=f"Promotion Strategy failed: {e}")
 
