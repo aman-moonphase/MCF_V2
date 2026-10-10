@@ -138,7 +138,7 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage, onSelec
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-primary-foreground text-sm font-semibold hover:scale-[1.02] active:scale-95 transition-all shadow-md"
             >
               <Calendar className="w-4 h-4" />
-              <span>Schedule Content</span>
+              <span>Add to Calendar</span>
             </button>
           )}
         </div>

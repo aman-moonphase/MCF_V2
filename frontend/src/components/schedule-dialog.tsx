@@ -92,7 +92,7 @@ export function ScheduleDialog({ projectId, isOpen, onClose, onScheduled, existi
           status: existingSchedule.status
         };
         await ScheduleService.updateSchedule(existingSchedule.id, payload);
-        toast.success('Schedule updated successfully!');
+        toast.success('Calendar entry updated');
       } else {
         const payload: CreateScheduleRequest = {
           projectId: selectedProjectId,
@@ -100,14 +100,14 @@ export function ScheduleDialog({ projectId, isOpen, onClose, onScheduled, existi
           scheduledAt,
         };
         await ScheduleService.createSchedule(payload);
-        toast.success('Project scheduled successfully!');
+        toast.success('Added to the calendar');
       }
       
       onScheduled();
       onClose();
     } catch (error: any) {
       console.error('Schedule error:', error);
-      toast.error(error?.message || 'Failed to schedule project');
+      toast.error(error?.message || 'Failed to save the calendar entry');
     } finally {
       setLoading(false);
     }
@@ -118,10 +118,10 @@ export function ScheduleDialog({ projectId, isOpen, onClose, onScheduled, existi
       <DialogContent className="sm:max-w-[425px] glass-panel border-white/10 shadow-2xl p-6 rounded-xl">
         <DialogHeader className="mb-4">
           <DialogTitle className="text-2xl font-bold text-gradient">
-            {existingSchedule ? 'Edit Schedule' : 'Schedule Content'}
+            {existingSchedule ? 'Edit legacy calendar entry' : 'Add legacy calendar entry'}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground/80">
-            Choose a platform and time to publish your next piece.
+            For projects from the earlier script workflow. This records a planned date only — MCF does not publish anything.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -134,7 +134,7 @@ export function ScheduleDialog({ projectId, isOpen, onClose, onScheduled, existi
                    <SelectValue placeholder="Select a project" />
                  </SelectTrigger>
                  <SelectContent className="glass-panel border-white/10">
-                   {eligibleProjects.length === 0 && <SelectItem value="none" disabled>No eligible projects found</SelectItem>}
+                   {eligibleProjects.length === 0 && <SelectItem value="none" disabled>No legacy projects with a completed final script</SelectItem>}
                    {eligibleProjects.map(p => (
                      <SelectItem key={p.id} value={p.id} className="cursor-pointer">{p.title}</SelectItem>
                    ))}
@@ -191,7 +191,7 @@ export function ScheduleDialog({ projectId, isOpen, onClose, onScheduled, existi
               Cancel
             </Button>
             <Button type="submit" disabled={loading} className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/25 min-w-[120px]">
-              {loading ? (existingSchedule ? 'Updating...' : 'Scheduling...') : (existingSchedule ? 'Update Schedule' : 'Schedule')}
+              {loading ? 'Saving...' : (existingSchedule ? 'Save changes' : 'Add to calendar')}
             </Button>
           </DialogFooter>
         </form>

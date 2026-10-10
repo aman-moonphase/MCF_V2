@@ -55,13 +55,27 @@ export function formatApiErrorDetail(detail: unknown, fallback: string): string 
   return fallback;
 }
 
-/** Builds the Error thrown for a failed response, with a readable message. */
-export async function errorFromResponse(res: Response): Promise<Error> {
+/** An Error for a failed response: the readable message, plus the HTTP status and the raw `detail` body. */
+export interface ApiResponseError extends Error {
+  status: number;
+  detail?: unknown;
+}
+
+/** Builds the Error thrown for a failed response, with a readable message (and `status` / `detail` attached). */
+export async function errorFromResponse(res: Response): Promise<ApiResponseError> {
   const fallback = `API Error: ${res.status} ${res.statusText}`.trim();
+  let error: ApiResponseError;
   try {
     const body = await res.json();
-    return new Error(formatApiErrorDetail(body?.detail ?? body?.message, fallback));
+    error = new Error(formatApiErrorDetail(body?.detail ?? body?.message, fallback)) as ApiResponseError;
+    error.detail = body?.detail;
   } catch {
-    return new Error(fallback);
+    error = new Error(fallback) as ApiResponseError;
   }
+  error.status = res.status;
+  return error;
+}
+
+export function isApiResponseError(error: unknown): error is ApiResponseError {
+  return error instanceof Error && typeof (error as Partial<ApiResponseError>).status === 'number';
 }

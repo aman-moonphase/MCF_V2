@@ -1,13 +1,21 @@
 "use client"
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { Project, WorkflowStage } from '@/types/project';
 import { GenerationService, GenerationState, PostClaim } from '@/lib/services/generation.service';
-import { AlertTriangle, ArrowLeft, CheckCircle2, Loader2, Lock, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CalendarPlus, CheckCircle2, Loader2, Lock, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UsageSummary } from '../usage-summary';
 import { EvaluationService, EvaluationState } from '@/lib/services/evaluation.service';
+import { PlanningApiError, ScheduleService } from '@/lib/services/schedule.service';
+import { PlanPostDialog } from '@/components/calendar/plan-post-dialog';
+import { formatInstant } from '@/lib/calendar-time';
+import { localTimeZone } from '@/lib/calendar-range';
+import type { CalendarEntry, PlanEligibility } from '@/types/schedule';
+
+const PLANS_LOOKAHEAD_DAYS = 365;
 
 interface Props {
   project: Project;
@@ -47,6 +55,11 @@ export function ReviewApprovalStage({ project, activeStage, onComplete, onSelect
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [evaluation, setEvaluation] = useState<EvaluationState | null>(null);
+  // Calendar planning (approved posts only): server-side eligibility and this post's upcoming plans.
+  const [planning, setPlanning] = useState<{ eligibility: PlanEligibility | null; error: string | null; plans: CalendarEntry[] }>(
+    { eligibility: null, error: null, plans: [] });
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planRefresh, setPlanRefresh] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +78,29 @@ export function ReviewApprovalStage({ project, activeStage, onComplete, onSelect
     })();
     return () => { cancelled = true; };
   }, [project.id]);
+
+  const approvedDraftId = state?.draft?.status === 'approved' ? state.draft.id : null;
+  useEffect(() => {
+    if (!approvedDraftId) return;
+    let cancelled = false;
+    (async () => {
+      const now = new Date();
+      const [eligibility, plans] = await Promise.allSettled([
+        ScheduleService.getPlanEligibility(project.id),
+        ScheduleService.getCalendar({ start: now, end: new Date(now.getTime() + PLANS_LOOKAHEAD_DAYS * 86400000), timezone: localTimeZone() }),
+      ]);
+      if (cancelled) return;
+      setPlanning({
+        eligibility: eligibility.status === 'fulfilled' ? eligibility.value : null,
+        error: eligibility.status === 'rejected'
+          ? (eligibility.reason instanceof PlanningApiError ? eligibility.reason.message : 'Could not check whether this post can be planned.')
+          : null,
+        plans: plans.status === 'fulfilled' ? plans.value.entries.filter((e) => e.generatedContentId === approvedDraftId) : [],
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [approvedDraftId, project.id, planRefresh]);
+  const refreshPlanning = useCallback(() => setPlanRefresh((n) => n + 1), []);
 
   const generateStage = project.stages.find((s) => s.type === 'generate-content');
   const backToGenerate = generateStage && onSelectStage ? (
@@ -100,6 +136,12 @@ export function ReviewApprovalStage({ project, activeStage, onComplete, onSelect
   const evaluationBlock = evaluation && !evaluation.canProceed ? evaluation.reason || 'Evaluate the current saved version first.' : null;
   const evaluateStage = project.stages.find((s) => s.type === 'evaluate-improve');
   const blocked = state.stale || !!state.blockingProblem || !!evaluationBlock;
+  // Planning refers to the exact approved version; the server decides eligibility (approval, evaluation, staleness).
+  const approvedCurrent = approved && draft.approvedVersion === draft.version;
+  const canPlan = approvedCurrent && planning.eligibility?.eligible === true && planning.eligibility.contentVersion === draft.version;
+  const planTitle = canPlan ? `Plan approved version ${draft.version} on the calendar`
+    : planning.eligibility && !planning.eligibility.eligible ? 'This approved post cannot be planned yet — see the reasons below'
+    : 'Checking whether this post can be planned…';
 
   const approve = async () => {
     setBusy(true);
@@ -140,6 +182,11 @@ export function ReviewApprovalStage({ project, activeStage, onComplete, onSelect
         </div>
         <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
           {!approved && backToGenerate}
+          {approved && (
+            <button onClick={() => setPlanOpen(true)} disabled={!canPlan} title={planTitle} className={cn(pill, 'bg-primary text-primary-foreground shadow-md')}>
+              <CalendarPlus className="w-4 h-4" />Add to Calendar
+            </button>
+          )}
           {!approved && (
             <button onClick={approve} disabled={busy || blocked} className={cn(pill, 'bg-primary text-primary-foreground shadow-md')}
               title={blocked ? 'Resolve the issues shown below first' : `Approve saved version ${draft.version}`}>
@@ -185,6 +232,61 @@ export function ReviewApprovalStage({ project, activeStage, onComplete, onSelect
         <p>Approving records your decision for this saved version only. It does not publish, schedule or send the post anywhere.
           {!approved && ' To change the post, go back to Generate Content, edit and save it, then return here.'}</p>
       </div>
+
+      {approved && (
+        <Panel title="Calendar">
+          {planning.error && <p className="text-sm text-destructive" role="alert">{planning.error}</p>}
+          {!planning.error && !planning.eligibility && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Loader2 className="w-4 h-4 animate-spin" />Checking whether this post can be planned…</p>
+          )}
+          {planning.eligibility?.eligible && (
+            <p className="text-sm text-muted-foreground">
+              Approved version {draft.version} can be planned on the calendar. Planning records a date only — MCF does not publish anything.
+            </p>
+          )}
+          {planning.eligibility && !planning.eligibility.eligible && (
+            <div className="space-y-2 text-sm text-amber-600 dark:text-amber-400">
+              <p className="flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />This approved post can&apos;t be planned yet:</p>
+              <ul className="list-disc pl-10 text-foreground/90">{planning.eligibility.reasons.map((r) => <li key={r.code}>{r.message}</li>)}</ul>
+            </div>
+          )}
+          {planning.plans.length > 0 && (
+            <div className="space-y-1">
+              <p className={label}>Planned for this version</p>
+              <ul className="text-sm space-y-0.5">
+                {planning.plans.map((p) => (
+                  <li key={p.id}>
+                    {formatInstant(p.scheduledAt, p.timezone ?? localTimeZone(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    {' '}<span className="text-muted-foreground">({p.timezone}) · {p.platform} · {p.status}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setPlanOpen(true)} disabled={!canPlan} title={planTitle} className={cn(pill, 'bg-primary text-primary-foreground')}>
+              <CalendarPlus className="w-4 h-4" />Add to Calendar
+            </button>
+            <Link href="/calendar" className={cn(pill, 'bg-muted text-foreground')}>Open Calendar</Link>
+          </div>
+        </Panel>
+      )}
+
+      {canPlan && (
+        <PlanPostDialog
+          open={planOpen}
+          onOpenChange={setPlanOpen}
+          post={{
+            projectId: project.id, projectTitle: project.title, productId: state.context?.productId ?? null,
+            productName: state.context?.productName ?? null, contentType: policy.contentType, platform: policy.platform,
+            version: draft.version,
+          }}
+          onPlanned={(entry) => {
+            toast.success(`Added to the calendar for ${formatInstant(entry.scheduledAt, entry.timezone ?? localTimeZone())}. Nothing has been published.`);
+            refreshPlanning();
+          }}
+        />
+      )}
 
       <Panel title="Hook">
         <p className="text-sm font-semibold text-foreground">{post.hook}</p>

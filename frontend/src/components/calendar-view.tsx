@@ -1,257 +1,358 @@
-import { useState, useEffect, useMemo } from 'react';
-import { ScheduleWithProject } from '@/types/schedule';
-import { ScheduleService } from '@/lib/services/schedule.service';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { CalendarIcon, Clock, Link as LinkIcon, Trash2, Edit2 } from 'lucide-react';
-import { toast } from 'sonner';
-import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday, isSameDay } from 'date-fns';
-import Link from 'next/link';
-import { ScheduleDialog } from './schedule-dialog';
+'use client';
 
-const getPlatformStyles = (platform: string) => {
-  switch (platform.toLowerCase()) {
-    case 'linkedin': return 'bg-blue-500/10 text-blue-500 border-blue-500/20 shadow-blue-500/10';
-    case 'twitter':
-    case 'twitter / x': return 'bg-sky-500/10 text-sky-500 border-sky-500/20 shadow-sky-500/10';
-    case 'instagram': return 'bg-pink-500/10 text-pink-500 border-pink-500/20 shadow-pink-500/10';
-    case 'youtube': return 'bg-red-500/10 text-red-500 border-red-500/20 shadow-red-500/10';
-    case 'tiktok': return 'bg-zinc-500/10 text-foreground border-zinc-500/20 shadow-zinc-500/10';
-    default: return 'bg-primary/10 text-primary border-primary/20 shadow-primary/10';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import Link from 'next/link';
+import { format, isToday } from 'date-fns';
+import { ChevronLeft, ChevronRight, Plus, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CalendarEntryCard } from '@/components/calendar/calendar-entry-card';
+import { AgendaList } from '@/components/calendar/agenda-list';
+import { MonthGrid } from '@/components/calendar/month-grid';
+import { RescheduleDialog, describePlanTime } from '@/components/calendar/reschedule-plan-dialog';
+import { CancelPlanDialog } from '@/components/calendar/cancel-plan-dialog';
+import { ScheduleDialog } from './schedule-dialog';
+import { CalendarApiError, ScheduleService } from '@/lib/services/schedule.service';
+import { ProductService, type Product } from '@/lib/services/product.service';
+import {
+  CALENDAR_VIEWS,
+  type CalendarViewMode,
+  calendarRange,
+  dayKey,
+  instantDayKey,
+  localTimeZone,
+  rangeLabel,
+  shiftAnchor,
+} from '@/lib/calendar-range';
+import type { CalendarEntry, CalendarRangeResponse, ScheduleWithProject } from '@/types/schedule';
+
+const ALL_PRODUCTS = 'all';
+
+// Browser-only values: null while rendering on the server, so nothing is ever derived from the server's clock or zone.
+const noSubscription = () => () => {};
+let firstClientNow: Date | null = null;
+const clientNow = () => (firstClientNow ??= new Date());
+function useBrowserValue<T>(read: () => T): T | null {
+  return useSyncExternalStore(noSubscription, read, () => null);
+}
+
+interface CalendarResult {
+  key: string | null;
+  data: CalendarRangeResponse | null;
+  error: CalendarApiError | null;
+}
+
+/** The legacy dialog edits legacy entries through the legacy route; it takes the legacy list shape. */
+function toLegacySchedule(entry: CalendarEntry): ScheduleWithProject {
+  return {
+    id: entry.id, projectId: entry.projectId, projectTitle: entry.projectTitle, platform: entry.platform,
+    scheduledAt: entry.scheduledAt, status: entry.status as ScheduleWithProject['status'],
+    createdAt: entry.createdAt ?? '', updatedAt: entry.updatedAt ?? '',
+  };
+}
+
+function errorText(error: CalendarApiError): string {
+  switch (error.kind) {
+    case 'auth': return 'Your session has expired. Sign in again to see your calendar.';
+    case 'network': return 'Could not reach the server. Check your connection and try again.';
+    case 'not_found': return 'The selected product was not found. Choose another product or show all products.';
+    case 'validation': return `The calendar range could not be loaded: ${error.message}`;
+    case 'invalid_response': return 'The server sent an unexpected calendar response. Try again.';
+    default: return `The calendar could not be loaded: ${error.message}`;
   }
-};
+}
 
 export function CalendarView() {
-  const [schedules, setSchedules] = useState<ScheduleWithProject[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // The display zone and "today" come from the browser — never from the server.
+  const timeZone = useBrowserValue(localTimeZone);
+  const today = useBrowserValue(clientNow);
+  const [chosenAnchor, setAnchor] = useState<Date | null>(null);
+  const anchor = chosenAnchor ?? today;
+  const [view, setView] = useState<CalendarViewMode>('month');
+  const [productId, setProductId] = useState<string>(ALL_PRODUCTS);
+  const [includeCancelled, setIncludeCancelled] = useState(false);
+  const [products, setProducts] = useState<Product[]>([]);
 
-  // Dialog state
+  const [result, setResult] = useState<CalendarResult>({ key: null, data: null, error: null });
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // Legacy dialog (legacy entries only).
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState<ScheduleWithProject | undefined>(undefined);
   const [initialDate, setInitialDate] = useState<string | undefined>(undefined);
+  // Planned entries: reschedule / cancel (one dialog at a time, for one entry).
+  const [planAction, setPlanAction] = useState<{ kind: 'reschedule' | 'cancel'; entry: CalendarEntry } | null>(null);
 
   useEffect(() => {
-    loadSchedules();
+    ProductService.list().then(setProducts).catch(() => setProducts([]));  // the filter is optional
   }, []);
 
-  const loadSchedules = async () => {
-    try {
-      setLoading(true);
-      const data = await ScheduleService.getSchedules();
-      setSchedules(data);
-    } catch (error) {
-      console.error('Failed to load schedules', error);
-      toast.error('Failed to load schedule data');
-    } finally {
-      setLoading(false);
+  const range = useMemo(() => (anchor ? calendarRange(view, anchor) : null), [view, anchor]);
+  const label = anchor ? rangeLabel(view, anchor) : '';
+
+  // One key per request; a response is shown only if it belongs to the current key (late responses are ignored).
+  const requestKey = range && timeZone
+    ? JSON.stringify([range.start.getTime(), range.end.getTime(), timeZone, productId, includeCancelled, reloadKey])
+    : null;
+  useEffect(() => {
+    if (!requestKey || !range || !timeZone) return;
+    let current = true;
+    ScheduleService.getCalendar({
+      start: range.start, end: range.end, timezone: timeZone, includeCancelled,
+      productId: productId === ALL_PRODUCTS ? undefined : productId,
+    })
+      .then((data) => {
+        if (current) setResult({ key: requestKey, data, error: null });
+      })
+      .catch((e: unknown) => {
+        if (current) {
+          setResult({ key: requestKey, data: null, error: e instanceof CalendarApiError ? e : new CalendarApiError('server', 'The calendar could not be loaded.') });
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [requestKey, range, timeZone, productId, includeCancelled]);
+
+  const loading = result.key !== requestKey;
+  const data = result.data;  // while a new range loads, the previous one stays visible (dimmed)
+  const error = loading ? null : result.error;
+
+  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  const byDay = useMemo(() => {
+    const groups = new Map<string, CalendarEntry[]>();
+    if (!data || !timeZone) return groups;
+    for (const entry of data.entries) {
+      const key = instantDayKey(entry.scheduledAt, timeZone);
+      groups.set(key, [...(groups.get(key) ?? []), entry]);
     }
-  };
+    return groups;
+  }, [data, timeZone]);
 
-  const deleteSchedule = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation(); // prevent opening edit dialog
-    if (!confirm('Are you sure you want to delete this scheduled item?')) return;
-    
-    try {
-      await ScheduleService.deleteSchedule(id);
-      toast.success('Schedule deleted');
-      loadSchedules();
-    } catch (error) {
-      console.error('Failed to delete schedule', error);
-      toast.error('Failed to delete schedule');
-    }
-  };
+  const entries = data?.entries ?? [];
+  // A compact note inside the calendar (never a panel that hides the dates).
+  const showEmptyNote = !loading && !error && data !== null && entries.length === 0;
+  const emptyText = `Nothing planned for ${label}.${includeCancelled ? '' : ' Cancelled entries are hidden.'}`;
 
-  const prevMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
-  };
-
-  const nextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
-  };
-
-  const openNewScheduleDialog = (day: Date) => {
-    // Offset for local timezone correctly
-    const offset = day.getTimezoneOffset();
-    const localDate = new Date(day.getTime() - (offset * 60 * 1000));
-    setInitialDate(localDate.toISOString().split('T')[0]);
+  const openNewLegacyEntry = (day?: Date) => {
+    setInitialDate(day ? dayKey(day) : undefined);
     setSelectedSchedule(undefined);
     setIsDialogOpen(true);
   };
 
-  const openEditDialog = (e: React.MouseEvent, schedule: ScheduleWithProject) => {
-    e.stopPropagation();
-    setSelectedSchedule(schedule);
+  const editLegacy = (entry: CalendarEntry) => {
+    if (!entry.isLegacy) return;  // planned entries are view-only here
+    setSelectedSchedule(toLegacySchedule(entry));
     setIsDialogOpen(true);
   };
 
-  const days = useMemo(() => {
-    const start = startOfMonth(currentDate);
-    const end = endOfMonth(currentDate);
-    return eachDayOfInterval({ start, end });
-  }, [currentDate]);
+  const deleteLegacy = async (entry: CalendarEntry) => {
+    if (!entry.isLegacy) return;
+    if (!confirm(`Delete this legacy calendar entry for "${entry.projectTitle}"? This only removes the calendar entry.`)) return;
+    try {
+      await ScheduleService.deleteSchedule(entry.id);
+      toast.success('Legacy calendar entry deleted');
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete the calendar entry');
+    }
+  };
 
-  if (loading) {
-    return (
-      <div className="flex h-[400px] items-center justify-center">
-        <div className="text-muted-foreground animate-pulse">Loading calendar...</div>
-      </div>
-    );
-  }
+  const goToDay = (day: Date) => {
+    setAnchor(day);
+    setView('day');
+  };
+
+  const openPlanAction = (kind: 'reschedule' | 'cancel') => (entry: CalendarEntry) => {
+    if (entry.isLegacy || entry.status === 'cancelled' || entry.cancelledAt !== null) return;  // planned, active only
+    setPlanAction({ kind, entry });
+  };
+
+  const cardProps = {
+    timeZone: timeZone ?? 'UTC', onEditLegacy: editLegacy, onDeleteLegacy: deleteLegacy,
+    onReschedule: openPlanAction('reschedule'), onCancelPlan: openPlanAction('cancel'),
+  };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground mb-2">Content Calendar</h2>
-          <p className="text-muted-foreground mt-1">Manage and schedule your content across all platforms.</p>
-        </div>
-        <div className="flex items-center space-x-2 bg-white dark:bg-card p-1 rounded-lg border border-slate-200 dark:border-border shadow-sm">
-          <Button variant="ghost" onClick={prevMonth} className="hover:bg-primary/10 hover:text-primary transition-colors">Previous</Button>
-          <div className="relative text-base font-bold min-w-[160px] text-center px-4 hover:text-primary transition-colors cursor-pointer flex items-center justify-center" onClick={() => setShowDatePicker(!showDatePicker)}>
-            {format(currentDate, 'MMMM yyyy')}
-            
-            {showDatePicker && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setShowDatePicker(false); }} />
-                <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-50 bg-white dark:bg-card border border-slate-200 dark:border-border rounded-xl shadow-xl p-3 w-64 animate-in fade-in zoom-in-95 duration-200 cursor-default" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex justify-between items-center mb-3">
-                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={(e) => { e.stopPropagation(); setCurrentDate(new Date(currentDate.getFullYear() - 1, currentDate.getMonth(), 1)); }}>
-                      &lt;
-                    </Button>
-                    <span className="font-bold text-foreground">{currentDate.getFullYear()}</span>
-                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={(e) => { e.stopPropagation(); setCurrentDate(new Date(currentDate.getFullYear() + 1, currentDate.getMonth(), 1)); }}>
-                      &gt;
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m, i) => (
-                      <div 
-                        key={m} 
-                        className={`text-sm py-1.5 rounded-md cursor-pointer text-center transition-colors ${currentDate.getMonth() === i ? 'bg-primary text-primary-foreground font-bold shadow-sm' : 'text-slate-600 dark:text-muted-foreground hover:bg-slate-100 dark:hover:bg-muted'}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCurrentDate(new Date(currentDate.getFullYear(), i, 1));
-                          setShowDatePicker(false);
-                        }}
-                      >
-                        {m}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-          <Button variant="ghost" onClick={nextMonth} className="hover:bg-primary/10 hover:text-primary transition-colors">Next</Button>
-        </div>
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">Content Calendar</h2>
+        <p className="text-muted-foreground">
+          Plan when approved content goes out. MCF records plans only — nothing is published automatically.
+        </p>
       </div>
 
-      <div className="grid grid-cols-7 gap-4">
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-          <div key={day} className="text-center font-medium text-muted-foreground py-2">
-            {day}
+      {/* Controls */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <div role="group" aria-label="Calendar view" className="inline-flex rounded-lg border border-slate-200 dark:border-border bg-white dark:bg-card p-1 shadow-sm">
+            {CALENDAR_VIEWS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={view === option.value}
+                onClick={() => setView(option.value)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${view === option.value ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
-        ))}
+          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-border bg-white dark:bg-card p-1 shadow-sm">
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Previous ${view}`}
+                    onClick={() => anchor && setAnchor(shiftAnchor(view, anchor, -1))} disabled={!anchor}>
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8" onClick={() => setAnchor(new Date())}>Today</Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Next ${view}`}
+                    onClick={() => anchor && setAnchor(shiftAnchor(view, anchor, 1))} disabled={!anchor}>
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+          <h3 className="text-lg font-bold text-foreground" aria-live="polite">{label}</h3>
+        </div>
 
-        {Array.from({ length: days[0].getDay() }).map((_, i) => (
-          <div key={`empty-${i}`} className="h-32 rounded-md border border-dashed border-border/50 bg-muted/20" />
-        ))}
-
-        {days.map((day: Date, dayIdx: number) => {
-          const daySchedules = schedules.filter((s) => isSameDay(parseISO(s.scheduledAt), day));
-          
-          return (
-            <div 
-              key={day.toString()} 
-              className={`h-36 rounded-xl border p-2.5 overflow-y-auto space-y-2 cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-md hover:border-primary/30 dark:hover:border-primary/50 ${
-                isToday(day) ? 'bg-primary/5 dark:bg-primary/10 border-primary/30 dark:border-primary/50 shadow-inner' : 'bg-white dark:bg-card border-slate-200 dark:border-border shadow-sm'
-              }`}
-              onClick={() => openNewScheduleDialog(day)}
-            >
-              <div className="flex justify-between items-center mb-2">
-                <span className={`text-sm font-bold flex items-center justify-center w-7 h-7 rounded-full ${isToday(day) ? 'bg-primary text-primary-foreground shadow-md shadow-primary/30' : 'text-muted-foreground'}`}>
-                  {format(day, 'd')}
-                </span>
-                {daySchedules.length > 0 && (
-                  <span className="text-xs bg-muted px-1.5 py-0.5 rounded-full">
-                    {daySchedules.length}
-                  </span>
-                )}
-              </div>
-
-              {daySchedules.map((schedule) => (
-                <div 
-                  key={schedule.id} 
-                  className={`group relative text-[11px] p-2 rounded-lg border shadow-sm flex flex-col gap-1.5 cursor-pointer transition-all hover:scale-[1.02] hover:shadow-md ${getPlatformStyles(schedule.platform).replace('text-', 'hover:border-').split(' ')[0]} bg-white dark:bg-card`}
-                  onClick={(e) => openEditDialog(e, schedule)}
-                >
-                  <div className="font-bold truncate pr-6 text-foreground/90 leading-tight" title={schedule.projectTitle}>
-                    {schedule.projectTitle}
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] font-medium">
-                    <span className="flex items-center gap-1 text-slate-500 dark:text-muted-foreground bg-slate-50 dark:bg-muted/50 px-1.5 py-0.5 rounded-md border border-slate-200 dark:border-border shadow-sm">
-                      <Clock className="w-3 h-3 opacity-70" /> {format(parseISO(schedule.scheduledAt), 'HH:mm')}
-                    </span>
-                    <span className={`px-1.5 py-0.5 rounded-md border ${getPlatformStyles(schedule.platform)}`}>
-                      {schedule.platform}
-                    </span>
-                  </div>
-                  
-                  {/* Hover actions */}
-                  <div className="absolute top-1 right-1 hidden group-hover:flex bg-white dark:bg-card rounded-md gap-1 p-0.5 shadow-md border border-slate-200 dark:border-border">
-                    <Link href={`/projects/${schedule.projectId}`} title="View Project" onClick={(e) => e.stopPropagation()}>
-                      <Button variant="ghost" size="icon" className="h-5 w-5 hover:bg-background/50">
-                        <LinkIcon className="h-3 w-3" />
-                      </Button>
-                    </Link>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-5 w-5 hover:bg-background/50 text-muted-foreground"
-                      onClick={(e) => openEditDialog(e, schedule)}
-                      title="Edit Schedule"
-                    >
-                      <Edit2 className="h-3 w-3" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-5 w-5 hover:bg-destructive/10 hover:text-destructive text-muted-foreground"
-                      onClick={(e) => deleteSchedule(e, schedule.id)}
-                      title="Delete Schedule"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
+        <div className="flex flex-wrap items-center gap-3">
+          {products.length > 0 && (
+            <div className="w-48">
+              <Select value={productId} onValueChange={setProductId}>
+                <SelectTrigger aria-label="Filter by product" className="h-9">
+                  <SelectValue placeholder="All products" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_PRODUCTS}>All products</SelectItem>
+                  {products.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          );
-        })}
+          )}
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <input type="checkbox" className="h-4 w-4 accent-primary" checked={includeCancelled}
+                   onChange={(e) => setIncludeCancelled(e.target.checked)} />
+            Show cancelled
+          </label>
+          <Button variant="outline" size="sm" onClick={() => openNewLegacyEntry(anchor ?? undefined)}>
+            <Plus className="mr-1 h-4 w-4" aria-hidden="true" /> Legacy entry
+          </Button>
+        </div>
       </div>
-      
-      {schedules.length === 0 && (
-        <Card className="bg-slate-50 dark:bg-muted/30 border-dashed border-2 border-slate-200 dark:border-border/50 shadow-sm cursor-pointer hover:bg-slate-100 dark:hover:bg-muted/50 transition-all duration-300 hover:border-primary/30 group overflow-hidden relative" onClick={() => openNewScheduleDialog(new Date())}>
-          <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-          <CardContent className="flex flex-col items-center justify-center py-20 text-center relative z-10">
-            <div className="w-20 h-20 rounded-full bg-white dark:bg-card border border-slate-200 dark:border-border shadow-sm flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500">
-              <CalendarIcon className="h-10 w-10 text-slate-400 dark:text-muted-foreground group-hover:text-primary transition-colors" />
+      {timeZone && <p className="-mt-3 text-xs text-muted-foreground">Times are shown in your time zone: {timeZone}.</p>}
+
+      {/* Status */}
+      {loading && (
+        <div role="status" className="text-sm text-muted-foreground animate-pulse">Loading calendar…</div>
+      )}
+      {error && !loading && (
+        <Card role="alert" className="border-destructive/40 bg-destructive/5">
+          <CardContent className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-foreground">{errorText(error)}</p>
+            <div className="flex gap-2">
+              {error.kind === 'auth' ? (
+                <Button asChild size="sm"><Link href="/login">Sign in</Link></Button>
+              ) : (
+                <Button size="sm" variant="outline" onClick={reload}>
+                  <RefreshCw className="mr-1 h-4 w-4" aria-hidden="true" /> Retry
+                </Button>
+              )}
             </div>
-            <h3 className="text-2xl font-bold mb-3 text-foreground">No content scheduled yet</h3>
-            <p className="text-slate-500 dark:text-muted-foreground max-w-md text-base leading-relaxed">
-              Your calendar is currently empty. Click anywhere on the calendar or right here to start planning your content strategy across all platforms.
-            </p>
           </CardContent>
         </Card>
       )}
+      {range && anchor && (
+        <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'} aria-busy={loading}>
+          {/* Month: the date grid at every width — it never depends on there being entries. */}
+          {view === 'month' && (
+            <div className="space-y-4">
+              <MonthGrid days={range.days} anchor={anchor} byDay={byDay} onSelectDay={goToDay}
+                         onAddLegacy={openNewLegacyEntry} {...cardProps} />
+              {showEmptyNote && <p className="text-center text-sm text-muted-foreground" data-testid="calendar-empty-note">{emptyText}</p>}
+              {/* Narrow screens: the month's entries as a list under the compact grid. */}
+              {entries.length > 0 && (
+                <div className="md:hidden">
+                  <AgendaList days={range.days} byDay={byDay} emptyText={emptyText} {...cardProps} />
+                </div>
+              )}
+            </div>
+          )}
 
-      {/* Reusable Dialog for creating/editing */}
+          {/* Week and Day on narrow screens: an agenda list (with a compact note when empty). */}
+          {view !== 'month' && (
+            <div className="md:hidden">
+              <AgendaList days={range.days} byDay={byDay} emptyText={showEmptyNote ? emptyText : ''} {...cardProps} />
+            </div>
+          )}
+
+          {view === 'week' && (
+            <div className="hidden md:block">
+              <div className="grid grid-cols-7 gap-2">
+                {range.days.map((day) => {
+                  const dayEntries = byDay.get(dayKey(day)) ?? [];
+                  return (
+                    <section key={dayKey(day)} aria-label={format(day, 'EEEE d MMMM')}
+                             className={`flex min-h-64 flex-col rounded-xl border p-2 ${isToday(day) ? 'border-primary/40 bg-primary/5' : 'border-slate-200 dark:border-border bg-white dark:bg-card'}`}>
+                      <button type="button" onClick={() => goToDay(day)} className="mb-2 text-left text-xs font-semibold text-muted-foreground hover:text-foreground">
+                        {format(day, 'EEE d')}{isToday(day) ? ' · Today' : ''}
+                      </button>
+                      <div className="flex flex-col gap-2">
+                        {dayEntries.map((entry) => <CalendarEntryCard key={entry.id} entry={entry} compact {...cardProps} />)}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+              {showEmptyNote && <p className="mt-3 text-center text-sm text-muted-foreground">{emptyText}</p>}
+            </div>
+          )}
+
+          {view === 'day' && (
+            <div className="mx-auto hidden max-w-2xl space-y-2 md:block">
+              {entries.map((entry) => <CalendarEntryCard key={entry.id} entry={entry} {...cardProps} />)}
+              {showEmptyNote && (
+                <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">{emptyText}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Planned entries: reschedule / cancel. The calendar reloads after a confirmed change or a detected conflict. */}
+      {planAction?.kind === 'reschedule' && (
+        <RescheduleDialog
+          key={`reschedule-${planAction.entry.id}`}
+          entry={planAction.entry}
+          open
+          onOpenChange={(next) => { if (!next) setPlanAction(null); }}
+          onRescheduled={(updated) => {
+            toast.success(`Plan moved to ${describePlanTime(updated.scheduledAt, updated.timezone ?? timeZone ?? 'UTC')}. Nothing has been published.`);
+            reload();
+          }}
+          onStale={reload}
+        />
+      )}
+      {planAction?.kind === 'cancel' && (
+        <CancelPlanDialog
+          key={`cancel-${planAction.entry.id}`}
+          entry={planAction.entry}
+          open
+          onOpenChange={(next) => { if (!next) setPlanAction(null); }}
+          onCancelled={() => {
+            toast.success('Plan cancelled. It stays in the calendar history; nothing was published or deleted.');
+            reload();
+          }}
+          onStale={reload}
+        />
+      )}
+
+      {/* Legacy dialog: legacy-compatible projects and legacy entries only. */}
       <ScheduleDialog
         isOpen={isDialogOpen}
         onClose={() => setIsDialogOpen(false)}
-        onScheduled={loadSchedules}
+        onScheduled={reload}
         existingSchedule={selectedSchedule}
         initialDate={initialDate}
       />

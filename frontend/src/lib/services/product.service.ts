@@ -50,6 +50,9 @@ export interface Product {
 }
 
 export const ProductService = {
+  /** The signed-in user's products (owner-scoped on the server). */
+  list: (): Promise<Product[]> => apiClient.get('/products'),
+
   getForProject: (projectId: string): Promise<Product | null> => apiClient.get(`/projects/${projectId}/product`),
 
   runUnderstanding: (projectId: string): Promise<Product> =>
