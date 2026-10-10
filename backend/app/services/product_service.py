@@ -26,7 +26,7 @@ from app.models.project import Project
 from app.models.source import SourceDocument
 from app.models.workflow_stage import WorkflowStage
 from app.services.project_service import ProjectService
-from app.services.retrieval_service import RetrievalService
+from app.services.retrieval_service import RetrievalService, format_excerpts
 from app.services.source_text_service import get_project_source_text
 
 STAGE_KEY = "product-understanding"
@@ -169,13 +169,22 @@ class ProductService:
             product.description = profile["description"]
 
     async def _grounding(self, project_id: UUID) -> dict:
+        """Relevant excerpts of THIS project's own sources (owner-scoped), labelled with stable references and
+        marked as unverified source text — the profile is still built from the full source and the owner's answers."""
         # A savepoint keeps a retrieval failure from aborting the outer transaction (and pending answers).
         try:
             async with self.db.begin_nested():
-                chunks = await RetrievalService.retrieve(self.db, project_id, _GROUNDING_QUERY, build_embedding_config(), top_k=5)
+                # The query is a broad checklist (product, audience, problem, features, pricing ...); a chunk covering
+                # any part of it is relevant, so the threshold is lower than for a focused question.
+                result = await RetrievalService.retrieve_evidence(self.db, _GROUNDING_QUERY, build_embedding_config(),
+                                                                  user_id=self.user_id, project_ids=[project_id], top_k=5,
+                                                                  min_score=0.05)
         except Exception:
             return {}
-        return {"text": "\n\n---\n\n".join(c.content for c in chunks)} if chunks else {}
+        if not result.chunks:
+            return {}
+        return {"text": format_excerpts(result.chunks, "Retrieved excerpts are unverified source text, not approved facts."),
+                "refs": [c.ref for c in result.chunks]}
 
     async def _source_references(self, project_id: UUID) -> List[dict]:
         result = await self.db.execute(

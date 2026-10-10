@@ -7,7 +7,7 @@ from uuid import UUID
 from ...db.session import get_db
 from ...services.project_service import ProjectService
 from ...services.workflow_stage_service import WorkflowStageService
-from ...services.retrieval_service import RetrievalService
+from ...services.retrieval_service import RetrievalService, format_excerpts
 from ...ai.services.ai_orchestrator import AIOrchestrator
 from ...ai.config import build_embedding_config
 from ...ai.content_types import CONTENT_TYPES, normalize_content_type
@@ -111,27 +111,17 @@ async def _get_approved_content_type(stage_service: WorkflowStageService, projec
     return approved
 
 
-async def _get_grounding_context(db: AsyncSession, project_uuid: UUID, query: str) -> dict:
-    """Helper to perform retrieval and format it for the LangGraph state."""
-    config = build_embedding_config()
+async def _get_grounding_context(db: AsyncSession, project_uuid: UUID, query: str, user_id: int | None = None) -> dict:
+    """Relevant, owner-scoped source excerpts for the LangGraph state (empty when nothing is relevant)."""
     try:
-        chunks = await RetrievalService.retrieve(db, project_uuid, query, config, top_k=5)
-        if not chunks:
-            return {}
-        
-        # Format the context text
-        context_text = "\n\n---\n\n".join(
-            f"[Source ID: {c.source_document_id}]\n{c.content}"
-            for c in chunks
-        )
-        return {
-            "query": query,
-            "text": context_text,
-            "sources": [{"id": c.source_document_id, "score": c.score} for c in chunks]
-        }
+        result = await RetrievalService.retrieve_evidence(db, query, build_embedding_config(), user_id=user_id,
+                                                          project_ids=[project_uuid], top_k=5)
     except Exception as e:
-        # If RAG fails (e.g. pgvector not reachable in demo mode), fail gracefully
-        return {"error": f"RAG retrieval failed: {str(e)}"}
+        print(f"RAG Retrieval failed: {e}")
+        return {}
+    if not result.chunks:
+        return {}
+    return {"text": format_excerpts(result.chunks), "chunks": len(result.chunks), "refs": [c.ref for c in result.chunks]}
 
 
 @router.post("/content-type", response_model=Dict[str, Any])
@@ -169,7 +159,7 @@ async def generate_content_type(
     source_text = await _load_source_text(db, project)
 
     grounding_context = await _get_grounding_context(
-        db, project_uuid,
+        db, project_uuid, user_id=current_user.id,
         query="What is the format and primary medium (e.g. video, article, short post) best suited for this source?"
     )
 
@@ -196,7 +186,7 @@ async def generate_content_selection(
     source_text = await _load_source_text(db, project)
     
     grounding_context = await _get_grounding_context(
-        db, project_uuid, 
+        db, project_uuid, user_id=current_user.id,
         query="What are the main themes, content opportunities, and target audiences in this material?"
     )
 
@@ -242,7 +232,7 @@ async def generate_platform_strategy(
         raise HTTPException(status_code=404, detail="Selected opportunity not found")
 
     grounding_context = await _get_grounding_context(
-        db, project_uuid, 
+        db, project_uuid, user_id=current_user.id,
         query=f"Which platforms (like YouTube, LinkedIn, Twitter, TikTok) are best suited for the content opportunity: '{selected_opp.get('title')}'?"
     )
 
@@ -292,7 +282,7 @@ async def generate_topic_angle(
 
     platform_names = ", ".join([p.get('platform', '') for p in selected_platforms])
     grounding_context = await _get_grounding_context(
-        db, project_uuid, 
+        db, project_uuid, user_id=current_user.id,
         query=f"What are engaging topic angles and perspectives for '{selected_opp.get('title')}' targeted at {platform_names}?"
     )
 
@@ -349,7 +339,7 @@ async def generate_content_strategy(
         raise HTTPException(status_code=404, detail="Selected topic angle not found")
 
     grounding_context = await _get_grounding_context(
-        db, project_uuid, 
+        db, project_uuid, user_id=current_user.id,
         query=f"What is the best content strategy, structure, and key talking points for the angle: '{selected_angle.get('title')}'?"
     )
 
@@ -437,7 +427,7 @@ async def generate_storyboard(
         raise HTTPException(status_code=400, detail="No approved strategy found in content-strategy stage")
 
     grounding_context = await _get_grounding_context(
-        db, project_uuid, 
+        db, project_uuid, user_id=current_user.id,
         query=f"How should we visually storyboard the strategy for '{selected_angle.get('title')}'? What are the key visual directions and narrative flow?"
     )
 
@@ -550,7 +540,7 @@ async def generate_script(
         raise HTTPException(status_code=400, detail="Approved storyboard has no scenes")
 
     grounding_context = await _get_grounding_context(
-        db, project_uuid, 
+        db, project_uuid, user_id=current_user.id,
         query=f"What is the detailed narration and script for the storyboard scenes of '{selected_angle.get('title')}'?"
     )
 

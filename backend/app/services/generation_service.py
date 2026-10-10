@@ -193,21 +193,35 @@ class GenerationService:
 
     # ─── Context for the generator ──────────────────────────────────────────
 
-    async def _sources(self, project: Project, query: str) -> Tuple[List[Tuple[str, str, str]], str]:
-        """[(label, title, text)] — S1 = the project's own sources, S2.. = retrieved excerpts — and the full text."""
+    async def _sources(self, project: Project, query: str):
+        """([(label, title, text)], full_text, excerpt_meta, retrieval) — "S1" = the project's own sources (full),
+        "S:<source>#<chunk>" = relevant retrieved excerpts with stable references (owner-scoped; unverified text)."""
         texts = await get_project_source_texts(self.db, project)
         full = "\n\n".join(f"--- {name} ---\n{body}" for name, body in texts)
         items: List[Tuple[str, str, str]] = []
+        excerpt_meta: Dict[str, Dict[str, Any]] = {}
+        retrieval: Dict[str, Any] = {"status": "no_sources", "note": "The project has no ingested sources.", "refs": []}
         if full:
             items.append(("S1", "Project sources: " + ", ".join(name for name, _ in texts), cap_for_prompt(full)))
             try:
                 async with self.db.begin_nested():
-                    chunks = await RetrievalService.retrieve(self.db, project.id, query, build_embedding_config(), top_k=4)
+                    found = await RetrievalService.retrieve_evidence(self.db, query, build_embedding_config(), user_id=self.user_id,
+                                                                     project_ids=[project.id], top_k=4)
             except Exception:
-                chunks = []
-            for i, chunk in enumerate(chunks, start=2):
-                items.append((f"S{i}", "Retrieved excerpt", chunk.content))
-        return items, full
+                found = None
+            if found is None:
+                retrieval = {"status": "error", "note": "Retrieval failed; only the full project source was used.", "refs": []}
+            else:
+                for chunk in found.chunks:
+                    items.append((chunk.ref, chunk.describe(), chunk.content))
+                    # Identity = source + chunk index + content hash. The chunk row id is deliberately not stored:
+                    # re-indexing replaces every row, so it would make unchanged evidence look different.
+                    excerpt_meta[chunk.ref] = {"source_document_id": chunk.source_document_id, "chunk_index": chunk.chunk_index,
+                                               "content_hash": (chunk.metadata or {}).get("content_hash"), "page": chunk.page,
+                                               "source_name": chunk.source_name, "score": chunk.score}
+                retrieval = {"status": found.status, "note": found.note(), "refs": [c.ref for c in found.chunks],
+                             "mode": found.mode, "skipped_stale": found.skipped_stale}
+        return items, full, excerpt_meta, retrieval
 
     async def _competitor_material(self, product: Product) -> Tuple[List[str], List[str]]:
         """Competitor names and raw evidence text — used only to stop the post naming or copying them.
@@ -266,7 +280,7 @@ class GenerationService:
         product_name = (profile.get("name") or product.name or "").strip()
 
         query = " ".join(filter(None, [pillar.get("name"), pillar.get("relation_to_product"), profile.get("value_proposition")]))
-        sources, full_source = await self._sources(project, query or product_name)
+        sources, full_source, excerpt_meta, retrieval = await self._sources(project, query or product_name)
         competitor_names, competitor_texts = await self._competitor_material(product)
 
         evidence: Dict[str, str] = {label: title for label, title, _ in sources}
@@ -339,6 +353,9 @@ class GenerationService:
             "pillar_index": pillar_index, "pillar": pillar.get("name"), "instructions": instructions,
             "primary_channel": primary_channel.get("channel"), "emphasis": emphasis.get("text"),
             "evidence": evidence, "source_count": len(sources),
+            # Retrieved excerpts cited by this post: where they came from, so Evaluate & Improve can tell when a
+            # cited excerpt changed or disappeared. Excerpts are unverified source text, not approved facts.
+            "evidence_meta": excerpt_meta, "retrieval": retrieval,
         }
         return state, snapshot
 

@@ -28,6 +28,8 @@ from app.models.workflow_stage import WorkflowStage
 from app.services.competitor_intelligence import intelligence_providers
 from app.services.extraction_service import ExtractionService
 from app.core.text_encoding import repair_mojibake
+from app.ai.config import build_embedding_config
+from app.services.retrieval_service import product_background
 from app.ai.competitor_grounding import EVIDENCE_GAP_PREFIX
 from app.ai.providers.demo_competitor import _mentioned
 from app.services.product_service import ProductService
@@ -409,6 +411,10 @@ class CompetitorService:
             raise HTTPException(status_code=409, detail="Analyze at least one competitor with evidence before comparing.")
 
         context = [("Our approved Product Profile", self._profile_text(product))]
+        profile = {k: v for k, v in (product.profile or {}).items() if v and k not in ("source_references", "missing_fields", "confidence")}
+        background, _ = await product_background(self.db, product, self.products.user_id, profile, build_embedding_config())
+        if background:
+            context.append(background)  # our side only; never competitor evidence and never citable here
         allowed, references, competitors_map, demo, corpus = [], {}, {}, [], [self._profile_text(product)]
         for index, c in enumerate(analyzed, start=1):
             label = f"C{index}"

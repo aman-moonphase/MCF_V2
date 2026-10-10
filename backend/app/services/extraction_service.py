@@ -39,23 +39,33 @@ class ExtractionService:
         except Exception as e:
             raise ValueError(f"Invalid PDF file: {str(e)}")
             
-        full_text = []
-        for i, page in enumerate(reader.pages):
+        # Keep each page's character range in the joined text, so chunks can cite their page number.
+        parts, page_ranges, page_numbers, offset = [], [], [], 0
+        for number, page in enumerate(reader.pages, start=1):
             text = page.extract_text()
-            if text:
-                full_text.append(text)
-                
-        if not full_text:
+            if not text:
+                continue
+            if parts:
+                offset += 2  # the "\n\n" joining pages
+            parts.append(text)
+            page_ranges.append([offset, offset + len(text)])
+            page_numbers.append(number)
+            offset += len(text)
+
+        if not parts:
             raise ValueError("Could not extract any text from the PDF")
-            
-        final_text = "\n\n".join(full_text)
-        
+
+        final_text = "\n\n".join(parts)
+
         meta = metadata or {}
         meta.update({
             "num_pages": len(reader.pages),
-            "source_type": "pdf"
+            "source_type": "pdf",
+            # [start, end) offsets in final_text, and the PDF page number each range came from
+            "page_ranges": page_ranges,
+            "page_numbers": page_numbers,
         })
-        
+
         return ExtractionResult(text=final_text, metadata=meta)
 
     @staticmethod

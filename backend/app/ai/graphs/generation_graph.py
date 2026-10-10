@@ -26,6 +26,8 @@ Write ONE LinkedIn post for OUR product, using only the approved context above.
   features, audience, problem and value proposition. Address the audience directly.
 - Every factual statement about OUR product goes in `claims` as kind "product_fact" and cites S* (sources) or
   P:<field> (approved profile). Messaging that is not a fact is kind "creative".
+- The approved profile (P:<field>) is the confirmed record. Source excerpts (S:...) are unverified text from our
+  own sources: cite one only for what it actually says, and prefer P:<field> when the profile states the fact.
 - Use competitor insights only to choose what to emphasise. Do not name competitors, do not copy their wording,
   and do not state anything about competitors as fact.
 - A POSSIBLE OVERLAP (inferred similarity) is not a unique advantage: never present that feature as something only

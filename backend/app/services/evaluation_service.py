@@ -24,6 +24,8 @@ from app.core.workflow import uses_product_workflow
 from app.models.content_evaluation import ContentEvaluation
 from app.models.generated_content import GeneratedContent
 from app.models.project import Project
+from app.models.source import DocumentChunk, SourceDocument
+from app.services.retrieval_service import is_stale, source_hashes
 from app.models.workflow_stage import WorkflowStage
 from app.services.generation_service import _PROFILE_SKIP, GenerationService, competitor_findings
 
@@ -101,10 +103,31 @@ class EvaluationService:
                       "differentiators": audience.get("differentiators")},
             competitor=competitor_findings(comparison) if competitor_current else None,
             competitor_limited=bool(product.competitor_limited_evidence),
+            excerpts=await self._excerpt_status(project, snapshot),
             validation=validation, evidence=snapshot.get("evidence") or {},
             stale_reasons=self.generation.stale_reasons(draft, ready["product"], ready["strategy"], ready["approved_type"]),
             policy=platform_policy(),
         )
+
+    async def _excerpt_status(self, project: Project, snapshot: dict) -> Dict[str, Dict[str, Any]]:
+        """For each retrieved excerpt the post cited: is it still the same text in a current source of THIS project?"""
+        statuses: Dict[str, Dict[str, Any]] = {}
+        for ref, meta in (snapshot.get("evidence_meta") or {}).items():
+            row = (await self.db.execute(
+                select(DocumentChunk, SourceDocument)
+                .join(SourceDocument, SourceDocument.id == DocumentChunk.source_document_id)
+                .where(DocumentChunk.project_id == project.id, SourceDocument.project_id == project.id,
+                       DocumentChunk.source_document_id == UUID(meta["source_document_id"]),
+                       DocumentChunk.chunk_index == meta["chunk_index"]))).first()
+            if row is None or row[1].status != "completed":
+                statuses[ref] = {"status": "missing", "content": ""}
+                continue
+            chunk, doc = row
+            chunk_meta = chunk.metadata_ or {}
+            changed = ((meta.get("content_hash") and chunk_meta.get("content_hash") != meta["content_hash"])
+                       or is_stale(chunk_meta, source_hashes(doc)))
+            statuses[ref] = {"status": "changed" if changed else "current", "content": chunk.content}
+        return statuses
 
     async def evaluate(self, project_id: UUID, version: int) -> ContentEvaluation:
         project, stages, draft = await self._load(project_id)

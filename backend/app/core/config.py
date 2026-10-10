@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     LINKEDIN_POST_MAX_CHARS: int = 3000
     LINKEDIN_HOOK_MAX_CHARS: int = 210
 
+    # RAG indexing and retrieval (app/services/chunking_service.py, ingestion_service.py, retrieval_service.py)
+    RAG_CHUNK_SIZE: int = 1000           # characters per chunk (bounded)
+    RAG_CHUNK_OVERLAP: int = 150         # characters shared with the previous chunk
+    RAG_MAX_SOURCE_CHARS: int = 2_000_000  # larger extracted sources are rejected with a clear message
+    RAG_EMBED_BATCH_SIZE: int = 64       # chunks per embedding call
+    RAG_MIN_RELEVANCE: float = 0.2       # below this an excerpt is not returned (no weak "fallback" evidence)
+    RAG_MAX_PER_SOURCE: int = 2          # excerpts per source document, so one document cannot dominate
+    RAG_CANDIDATE_LIMIT: int = 400       # chunks scored per retrieval
+
     # Embeddings: "demo" or "openai". Defaults to "openai" only when AI_PROVIDER is "openai".
     EMBEDDING_PROVIDER: str | None = None
 

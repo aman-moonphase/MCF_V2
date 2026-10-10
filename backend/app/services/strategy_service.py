@@ -27,7 +27,9 @@ from app.models.product import Product
 from app.models.project import Project
 from app.models.promotion_strategy import PromotionStrategy
 from app.models.workflow_stage import WorkflowStage
+from app.ai.config import build_embedding_config
 from app.services.product_service import ProductService
+from app.services.retrieval_service import product_background
 
 STAGE_KEY = "promotion-strategy"
 
@@ -111,6 +113,9 @@ class StrategyService:
                                                                          "positioning_opportunities", "promotion_patterns_to_investigate",
                                                                          "evidence_needed")}, ensure_ascii=False, indent=1)))
             corpus.append(json.dumps(comparison, ensure_ascii=False))
+        background, background_refs = await product_background(self.db, product, self.user_id, profile, build_embedding_config())
+        if background:
+            context.append(background)
         context.append(("Output constraint", MVP_STRATEGY_NOTE))
         context.append(("Allowed references", ", ".join(allowed) or "(none)"))
         return {

@@ -3,6 +3,13 @@ from typing import List
 from .base import BaseEmbeddingProvider
 
 class DemoEmbeddingProvider(BaseEmbeddingProvider):
+    """Deterministic, free, offline vectors derived from a text hash. They carry no meaning, so retrieval in Demo
+    Mode ranks by keyword relevance instead of vector similarity (semantic = False)."""
+
+    provider_name = "demo"
+    model_name = "demo-hash-1536"
+    semantic = False
+
     def __init__(self, dimension: int = 1536):
         self.dimension = dimension
 

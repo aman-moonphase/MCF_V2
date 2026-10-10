@@ -134,6 +134,11 @@ class RuleBasedEvaluator:
                     "problem", "medium", f"\"{_short(claim.get('text', ''))}\" cites profile fields that are empty in the approved profile.",
                     "Cite a field that actually holds this information, or remove the claim.", cite(missing_fields)))
                 continue
+            excerpt_issue = self._excerpt_issue(claim, [r for r in grounded if r.startswith("S:")], ctx, cite)
+            if excerpt_issue:
+                found["factual_grounding"].append(excerpt_issue)
+                if excerpt_issue["type"] == "problem":
+                    continue
             supported += 1
         notes["factual_grounding"] = f"{supported} product claim(s) cite approved profile fields or sources."
         if ctx.edited:
@@ -228,6 +233,29 @@ class RuleBasedEvaluator:
         notes["strategy_alignment"] = ("Messaging direction: \"" + _short(direction, 120) + "\"." if direction else "No messaging direction.")
 
         return self._assemble(found, notes)
+
+    @staticmethod
+    def _excerpt_issue(claim: dict, excerpt_refs: List[str], ctx: EvaluationContext, cite) -> Optional[dict]:
+        """Retrieved excerpts are unverified source text. A cited excerpt must still match its source and actually
+        contain the claim; a claim backed only by excerpts (no approved profile field) stays an unknown."""
+        if not excerpt_refs:
+            return None
+        text = _short(claim.get("text", ""))
+        for ref in excerpt_refs:
+            info = ctx.excerpts.get(ref) or {"status": "missing"}
+            if info["status"] != "current":
+                return _finding("problem", "medium",
+                                f"\"{text}\" cites a source excerpt that has {'changed' if info['status'] == 'changed' else 'been removed'} since the post was generated.",
+                                "Regenerate the post, or check the claim against the current source.", cite([ref]))
+            claim_terms = stems(claim.get("text", ""))
+            if claim_terms and len(claim_terms & stems(info.get("content", ""))) / len(claim_terms) < 0.5:
+                return _finding("problem", "medium", f"The cited source excerpt does not clearly contain the claim \"{text}\".",
+                                "Cite evidence that states it, or remove or soften the claim.", cite([ref]),
+                                excerpt=_short(info.get("content", ""), 160))
+        if not any(r.startswith("P:") for r in claim.get("refs") or []):
+            return _finding("unknown", "low", f"\"{text}\" is backed only by source text, not by the approved profile.",
+                            "Source excerpts are unverified. Confirm the fact, or add it to the approved profile.", cite(excerpt_refs))
+        return None
 
     @staticmethod
     def _pillar_suggestion(kind: str, ctx: EvaluationContext) -> str:

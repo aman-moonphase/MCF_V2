@@ -8,7 +8,7 @@ import re
 from ...db.session import get_db
 from ...models.source import SourceDocument
 from ...services.project_service import ProjectService
-from ...services.ingestion_service import IngestionService
+from ...services.ingestion_service import IngestionError, IngestionService
 from ...ai.config import build_embedding_config
 from ...api.deps import get_current_user
 from ...core.config import settings
@@ -130,6 +130,19 @@ async def ingest_source(
             .where(DocumentChunk.source_document_id == source.id)
         )
 
+        if source.status == "duplicate":
+            duplicate_of = (source.metadata_ or {}).get("duplicate_of")
+            return {
+                "id": str(source.id),
+                "project_id": str(source.project_id),
+                "source_type": source.source_type,
+                "title": source.name,
+                "status": "Duplicate",
+                "message": "This content is already indexed in this project; it was not indexed again.",
+                "duplicate_of": duplicate_of,
+                "chunks_created": 0,
+                "characters_extracted": 0,
+            }
         return {
             "id": str(source.id),
             "project_id": str(source.project_id),
@@ -140,8 +153,33 @@ async def ingest_source(
             "chunks_created": chunks_created or 0,
             "characters_extracted": len(source.extracted_text or ""),
         }
+    except IngestionError as e:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
         # Note user requirement: Never silently return fake success for real ingestion failures.
         raise HTTPException(status_code=500, detail=f"Failed to ingest source: {repr(e)}")
+
+
+@router.post("/{project_id}/sources/{source_id}/reindex", response_model=Dict[str, Any])
+async def reindex_source(
+    project_id: UUID,
+    source_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user)
+):
+    """Rebuild a source's chunks from its stored full text with the configured embedding provider (e.g. after the
+    embedding provider changed). The project must belong to the current user."""
+    await ProjectService(db, current_user.id).get_project(project_id)
+    try:
+        source = await IngestionService.reindex_source(db, project_id, source_id, build_embedding_config())
+    except IngestionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Source not found")
+    meta = source.metadata_ or {}
+    return {"id": str(source.id), "status": "Reindexed", "chunks_created": meta.get("chunk_count", 0),
+            "embedding_provider": meta.get("embedding_provider"), "embedding_model": meta.get("embedding_model")}

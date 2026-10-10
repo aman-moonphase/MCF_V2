@@ -46,6 +46,8 @@ class EvaluationContext:
     stale_reasons: List[str] = field(default_factory=list)  # approved context changed since generation
     policy: Any = None                        # PlatformPolicy
     competitor_limited: bool = False          # Competitor Analysis was approved with limited evidence
+    # Retrieved excerpts cited by the post: ref -> {"status": current|changed|missing, "content": str}
+    excerpts: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 class ContentEvaluator(Protocol):
