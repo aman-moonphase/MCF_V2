@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
+import { isSessionRejected } from '@/lib/api-errors';
 
 interface User {
   id: number;
@@ -24,6 +25,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // The server could not be reached (or failed) while checking the session: the saved session is kept, not discarded.
+  const [serverUnreachable, setServerUnreachable] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -36,15 +39,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const token = localStorage.getItem('access_token');
       if (!token) {
         setUser(null);
+        setServerUnreachable(false);
         return;
       }
       
       const userData = await apiClient.get('/auth/me');
       setUser(userData);
+      setServerUnreachable(false);
     } catch (error) {
       console.error('Auth check failed:', error);
       setUser(null);
-      localStorage.removeItem('access_token');
+      if (isSessionRejected(error)) {
+        setServerUnreachable(false);
+        localStorage.removeItem('access_token');  // the server said this session is not valid
+      } else {
+        setServerUnreachable(true);  // backend down / restarting: keep the session so Try again can restore it
+      }
     } finally {
       setIsLoading(false);
     }
@@ -55,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && !serverUnreachable) {
       const publicRoutes = ['/login', '/register', '/forgot-password', '/reset-password'];
       if (!user && !publicRoutes.includes(pathname)) {
         router.push('/login');
@@ -63,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         router.push('/');
       }
     }
-  }, [user, isLoading, pathname, router]);
+  }, [user, isLoading, serverUnreachable, pathname, router]);
 
   const login = async (token: string) => {
     localStorage.setItem('access_token', token);
@@ -83,6 +93,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           <div className="flex flex-col items-center gap-4">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent shadow-md" />
             <p className="text-sm text-muted-foreground font-medium animate-pulse">Initializing Workspace...</p>
+          </div>
+        </div>
+      ) : serverUnreachable ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background p-6">
+          <div role="alert" className="max-w-md space-y-4 text-center">
+            <h2 className="text-xl font-semibold text-foreground">Can&apos;t reach the server</h2>
+            <p className="text-sm text-muted-foreground">
+              MCF could not contact the backend. You are still signed in — nothing was lost. Check that the server is
+              running, then try again.
+            </p>
+            <button
+              type="button"
+              onClick={() => { setIsLoading(true); void checkAuth(); }}
+              className="inline-flex h-10 items-center rounded-full bg-primary px-5 text-sm font-medium text-primary-foreground"
+            >
+              Try again
+            </button>
           </div>
         </div>
       ) : (

@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.config import settings
+from app.core.uploads import read_upload_limited
 from app.db.session import get_db
 from app.models.competitor import Competitor
 from app.models.product import Product
@@ -118,7 +120,7 @@ async def add_evidence(
 ):
     """Add evidence: a public URL (fetched safely), pasted observations, or a PDF."""
     service = CompetitorService(db, user.id)
-    file_bytes = await file.read() if file else None
+    file_bytes = await read_upload_limited(file, settings.MAX_UPLOAD_BYTES) if file else None  # 413 when too large
     e = await service.add_evidence(product_id, competitor_id, evidence_type, content, title, file_bytes, file.filename if file else None)
     return EvidenceResponse(
         id=e.id, evidence_type=e.evidence_type, source_url=e.source_url, title=e.title, status=e.status, error=e.error,

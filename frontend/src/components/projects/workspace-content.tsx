@@ -92,19 +92,19 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage, onSelec
     <div className="flex-1 min-w-0 flex flex-col h-full bg-background overflow-hidden relative z-10">
       
       {/* Workspace Header */}
-      <div className="flex items-center justify-between px-8 py-5 border-b border-border/50 glass-panel z-20">
-        <div className="flex flex-col">
+      <div className="flex items-start sm:items-center justify-between gap-3 sm:gap-4 px-4 sm:px-8 py-4 sm:py-5 border-b border-border/50 bg-background/95 sm:bg-background/80 backdrop-blur-md z-20">
+        <div className="flex flex-col min-w-0 pr-2">
           <span className="text-xs font-semibold tracking-wider text-primary uppercase mb-1">
             Active Stage
           </span>
-          <h2 className="text-2xl font-bold tracking-tight text-foreground">
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground truncate">
             {getStageLabel(activeStage)}
           </h2>
           <div className="mt-2"><AiModeIndicator /></div>
         </div>
         
-        <div className="flex items-center gap-3">
-          <div className={`px-3 py-1 rounded-full text-xs font-medium border ${
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0 pt-0.5 sm:pt-0">
+          <div className={`px-2.5 sm:px-3 py-1 rounded-full text-xs font-medium border whitespace-nowrap shrink-0 ${
             activeStage.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 
             activeStage.status === 'In Progress' ? 'bg-primary/10 text-primary border-primary/20' : 
             'bg-muted text-muted-foreground border-border/50'
@@ -145,7 +145,7 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage, onSelec
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto p-8 lg:p-12">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-8 lg:p-12">
         <div className="max-w-4xl mx-auto">
           {renderStageContent()}
         </div>

@@ -117,7 +117,9 @@ class IngestionService:
             except ValueError as e:
                 if "Empty" in str(e) or "No text" in str(e) or "Could not extract any text" in str(e):
                     raise IngestionError(f"The source has no extractable text ({e}).") from e
-                raise
+                # Extractors raise ValueError for problems with the INPUT (corrupt PDF, unreachable or unsafe URL):
+                # a clear 422 for the user, not a server error.
+                raise IngestionError(str(e)) from e
             text = extracted.text
             if not text or not text.strip():
                 raise IngestionError("The source has no extractable text.")

@@ -12,6 +12,7 @@ from ...services.ingestion_service import IngestionError, IngestionService
 from ...ai.config import build_embedding_config
 from ...api.deps import get_current_user
 from ...core.config import settings
+from ...core.uploads import save_upload_limited
 from ...core.url_safety import UnsafeURLError, validate_public_url
 
 router = APIRouter()
@@ -74,6 +75,9 @@ async def ingest_source(
     elif source_type == "text":
         if not content:
             raise HTTPException(status_code=400, detail="Text content is required")
+        if len(content) > settings.RAG_MAX_SOURCE_CHARS:  # refuse before anything is stored
+            raise HTTPException(status_code=422, detail=f"The source is too large to index ({len(content):,} characters; "
+                                                        f"the limit is {settings.RAG_MAX_SOURCE_CHARS:,}). Split it into smaller sources.")
         text = content
     elif source_type == "pdf":
         if not file:
@@ -83,9 +87,7 @@ async def ingest_source(
         os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
         file_path = temp_upload_path()
         display_name = safe_display_name(file.filename)
-        content_bytes = await file.read()
-        with open(file_path, "wb") as buffer:
-            buffer.write(content_bytes)
+        await save_upload_limited(file, file_path, settings.MAX_UPLOAD_BYTES)  # 413 (and no file left) when too large
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported source type: {source_type}")
 

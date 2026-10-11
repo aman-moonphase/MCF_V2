@@ -136,7 +136,7 @@ export function EvaluateImproveStage({ project, activeStage, onComplete, onSelec
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-12">
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sticky top-0 bg-background/80 backdrop-blur-md py-4 z-20 border-b border-border/50">
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sticky top-0 -mt-4 sm:mt-0 pt-4 pb-4 -mx-4 sm:mx-0 px-4 sm:px-0 bg-background/95 sm:bg-background/80 backdrop-blur-md z-20 border-b border-border/50">
         <div className="min-w-0 flex-[1_1_18rem]">
           <div className="flex items-center gap-3 flex-wrap">
             <h3 className="text-xl font-bold text-foreground">Evaluate · saved version {draft.version}</h3>

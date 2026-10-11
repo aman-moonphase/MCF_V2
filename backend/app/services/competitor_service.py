@@ -15,6 +15,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.competitor_schemas import FINDING_SECTIONS, PERFORMANCE_DATA_NOTE, SECTION_LABELS
@@ -193,7 +194,12 @@ class CompetitorService:
         )
         self.db.add(competitor)
         self._touch(product)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            # The same name was added by a simultaneous request (the check above and this insert are not atomic).
+            await self.db.rollback()
+            raise HTTPException(status_code=409, detail=f"'{name}' is already in the competitor list.")
         return competitor
 
     @staticmethod

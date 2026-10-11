@@ -79,3 +79,11 @@ export async function errorFromResponse(res: Response): Promise<ApiResponseError
 export function isApiResponseError(error: unknown): error is ApiResponseError {
   return error instanceof Error && typeof (error as Partial<ApiResponseError>).status === 'number';
 }
+
+/**
+ * True only when the server REJECTED the session (401/403). A network failure or a 5xx (backend restarting, brief
+ * outage) says nothing about the session and must not sign the user out.
+ */
+export function isSessionRejected(error: unknown): boolean {
+  return isApiResponseError(error) && (error.status === 401 || error.status === 403);
+}

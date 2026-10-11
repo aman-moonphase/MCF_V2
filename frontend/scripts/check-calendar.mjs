@@ -14,6 +14,7 @@
  *  5. Reschedule / cancel (Step 8): card actions per entry kind, lock_version on the wire, conflicts surfaced and
  *     never retried, error kinds, local refusals that send nothing, and the prefill helper.
  *  6. Preferences (Step 10): the settings service used for the calendar's default view and the planning defaults.
+ *  7. Session rule (Step 11): only a server rejection (401/403) ends the session, not an outage.
  *
  * No network, no API calls, no data.
  */
@@ -437,6 +438,21 @@ async function settingsServiceChecks(outDir) {
   console.log('settings service: OK (GET/PUT /settings/me, three fields only, blank zone → null, error kinds)');
 }
 
+/** Step 11: only a server rejection (401/403) may end the session; outages must not sign the user out. */
+async function sessionRuleChecks(outDir) {
+  const { errorFromResponse, isSessionRejected } = load(path.join(outDir, 'lib/api-errors.js'));
+  const response = (status, body) => ({ ok: false, status, statusText: String(status), json: async () => body });
+  assert.equal(isSessionRejected(await errorFromResponse(response(401, { detail: 'Not authenticated' }))), true);
+  assert.equal(isSessionRejected(await errorFromResponse(response(403, { detail: 'Could not validate credentials' }))), true);
+  for (const status of [404, 422, 500, 502, 503]) {
+    assert.equal(isSessionRejected(await errorFromResponse(response(status, { detail: 'x' }))), false, `HTTP ${status} must not end the session`);
+  }
+  assert.equal(isSessionRejected(new TypeError('Failed to fetch')), false);  // backend unreachable / restarting
+  assert.equal(isSessionRejected(new Error('boom')), false);
+  assert.equal(isSessionRejected(undefined), false);
+  console.log('session rule: OK (only 401/403 end the session; network errors and 5xx keep it)');
+}
+
 function rangeChecks(outDir, zone) {
   process.env.TZ = zone;  // Node applies TZ on assignment
   installResolver(outDir);
@@ -479,6 +495,7 @@ if (zoneArg) {
     cardActionChecks(outDir);
     await rescheduleCancelChecks(outDir);
     await settingsServiceChecks(outDir);
+    await sessionRuleChecks(outDir);
     for (const zone of ['Europe/London', 'America/New_York', 'Asia/Kolkata', 'UTC']) {
       const child = spawnSync(process.execPath, [SCRIPT, `${ZONE_ARG}${zone}`, `${OUT_ARG}${outDir}`], { encoding: 'utf8' });
       process.stdout.write(child.stdout);

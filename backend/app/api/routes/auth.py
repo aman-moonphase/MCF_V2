@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core import security
@@ -71,7 +72,12 @@ async def register_user(
         is_superuser=False,
     )
     db.add(user_obj)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The same email was registered by a simultaneous request (the check above and this insert are not atomic).
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="The user with this username already exists in the system.")
     await db.refresh(user_obj)
     return user_obj
 

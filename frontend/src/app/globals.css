@@ -134,6 +134,42 @@
   100% { background-position: 0% 50%; }
 }
 
+/* Home-page buddy (components/composer/HeroMascot.tsx) */
+@keyframes mascot-wave {
+  0%, 100% { transform: rotate(-10deg); }
+  50% { transform: rotate(16deg); }
+}
+
+@keyframes mascot-breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.012, 1.03); }
+}
+
+@keyframes mascot-sway {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(5deg) translateY(-2px); }
+}
+
+@keyframes mascot-nod {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg); }
+}
+
+@keyframes mascot-blink {
+  0%, 91%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.08); }
+}
+
+.mascot-wave { animation: mascot-wave 0.75s ease-in-out 0.5s infinite; }
+.mascot-breathe { transform-origin: 50% 100%; animation: mascot-breathe 2.8s ease-in-out infinite; }
+.mascot-sway { transform-origin: 50% 100%; animation: mascot-sway 0.9s ease-in-out 0.45s infinite; }
+.mascot-nod { transform-box: fill-box; transform-origin: 50% 100%; animation: mascot-nod 1.5s ease-in-out infinite; }
+.mascot-eyes { transform-box: fill-box; transform-origin: center; animation: mascot-blink 4.2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot-wave, .mascot-breathe, .mascot-sway, .mascot-nod, .mascot-eyes { animation: none; }
+}
+
 @layer utilities {
   .animate-gradient-flow {
     background-size: 200% auto;

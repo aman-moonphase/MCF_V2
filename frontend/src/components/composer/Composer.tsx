@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
 import { ProjectService } from "@/lib/project-service"
 import { ContentRecipes } from "./ContentRecipes"
+import { HeroMascot } from "./HeroMascot"
 
 const LinkedinIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" {...props}>
@@ -156,7 +157,7 @@ export function Composer() {
       transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
       className="flex flex-col w-full max-w-4xl"
     >
-      <div className="flex flex-col md:flex-row items-center justify-between w-full mb-4 gap-8">
+      <div className="relative flex flex-col md:flex-row items-center justify-between w-full mb-4 gap-8">
         <div className="flex flex-col items-start w-full md:w-auto z-10">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -172,7 +173,7 @@ export function Composer() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-tighter text-foreground leading-[1.15] mb-8 md:mb-0"
+            className="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-tighter text-foreground leading-[1.15] mb-[104px] md:mb-0"
           >
             What are you <br />
             <span className="text-transparent bg-clip-text animate-gradient-flow bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 dark:from-indigo-400 dark:via-purple-400 dark:to-pink-400">
@@ -204,7 +205,7 @@ export function Composer() {
           <motion.div 
             animate={{ y: [-5, 5, -5], rotate: [-2, 2, -2] }}
             transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
-            className="absolute left-[10%] top-[15%] w-16 h-20 rounded-xl bg-white/5 border border-slate-200 dark:border-white/10 shadow-lg backdrop-blur-md flex items-center justify-center z-10"
+            className="absolute left-[0%] top-[38%] w-14 h-[72px] rounded-xl bg-white/5 border border-slate-200 dark:border-white/10 shadow-lg backdrop-blur-md flex items-center justify-center z-10"
           >
             <FileText className="w-6 h-6 text-indigo-500 dark:text-indigo-400" />
           </motion.div>
@@ -212,7 +213,7 @@ export function Composer() {
           <motion.div 
             animate={{ y: [5, -5, 5], rotate: [2, -2, 2] }}
             transition={{ duration: 6, delay: 0.5, repeat: Infinity, ease: "easeInOut" }}
-            className="absolute left-[35%] top-[5%] w-20 h-24 rounded-2xl bg-white/5 border border-slate-200 dark:border-white/10 shadow-xl backdrop-blur-md flex items-center justify-center z-20"
+            className="absolute left-[15%] top-[2%] w-[72px] h-[88px] rounded-2xl bg-white/5 border border-slate-200 dark:border-white/10 shadow-xl backdrop-blur-md flex items-center justify-center z-20"
           >
             <Sparkles className="w-8 h-8 text-purple-500 dark:text-purple-400" />
           </motion.div>
@@ -220,11 +221,14 @@ export function Composer() {
           <motion.div 
             animate={{ y: [-8, 8, -8], rotate: [-4, 4, -4] }}
             transition={{ duration: 7, delay: 1.5, repeat: Infinity, ease: "easeInOut" }}
-            className="absolute right-[15%] top-[25%] w-16 h-16 rounded-full bg-white/5 border border-slate-200 dark:border-white/10 shadow-lg backdrop-blur-md flex items-center justify-center z-10"
+            className="absolute left-[40%] top-[-4%] w-12 h-12 rounded-full bg-white/5 border border-slate-200 dark:border-white/10 shadow-lg backdrop-blur-md flex items-center justify-center z-10"
           >
             <Link2 className="w-6 h-6 text-pink-500 dark:text-pink-400" />
           </motion.div>
         </div>
+
+        {/* The buddy peeks up from the top edge of the composer: this row's bottom edge plus its mb-4 gap */}
+        <HeroMascot className="absolute -bottom-4 right-6 md:right-12 z-0 w-[96px] md:w-[124px]" />
       </div>
 
       {/* Main Composer Area */}

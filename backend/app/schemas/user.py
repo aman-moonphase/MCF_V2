@@ -1,5 +1,10 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
+
+# Enforced on the server (the browser's minLength is only a convenience). Login does not use these limits, so existing
+# accounts with a shorter password can still sign in.
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128
 
 # Shared properties
 class UserBase(BaseModel):
@@ -10,7 +15,7 @@ class UserBase(BaseModel):
 # Properties to receive via API on creation
 class UserCreate(UserBase):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
 
 # Properties to receive via API on update
 class UserUpdate(UserBase):
@@ -35,4 +40,4 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    new_password: str
+    new_password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)

@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     RAG_CHUNK_SIZE: int = 1000           # characters per chunk (bounded)
     RAG_CHUNK_OVERLAP: int = 150         # characters shared with the previous chunk
     RAG_MAX_SOURCE_CHARS: int = 2_000_000  # larger extracted sources are rejected with a clear message
+    MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024  # PDF uploads (sources and competitor evidence) above this are refused (413)
     RAG_EMBED_BATCH_SIZE: int = 64       # chunks per embedding call
     RAG_MIN_RELEVANCE: float = 0.2       # below this an excerpt is not returned (no weak "fallback" evidence)
     RAG_MAX_PER_SOURCE: int = 2          # excerpts per source document, so one document cannot dominate

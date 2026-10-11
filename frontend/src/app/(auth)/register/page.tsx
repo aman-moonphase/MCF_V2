@@ -97,6 +97,8 @@ export default function RegisterPage() {
                   type="password" 
                   placeholder="••••••••"
                   required 
+                  minLength={8}
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="h-12 px-4 rounded-xl bg-white/50 dark:bg-black/20 border-slate-200 dark:border-white/10 focus-visible:ring-indigo-500 focus-visible:border-indigo-500 transition-all shadow-sm"
@@ -109,6 +111,8 @@ export default function RegisterPage() {
                   type="password" 
                   placeholder="••••••••"
                   required 
+                  minLength={8}
+                  autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   className="h-12 px-4 rounded-xl bg-white/50 dark:bg-black/20 border-slate-200 dark:border-white/10 focus-visible:ring-indigo-500 focus-visible:border-indigo-500 transition-all shadow-sm"

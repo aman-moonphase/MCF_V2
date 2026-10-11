@@ -1,6 +1,9 @@
 from fastapi import FastAPI
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.core.config import settings
+from app.core.redaction import redact_payload
 from app.db import base as _orm_models  # noqa: F401  (registers every ORM model so string relationships resolve)
 from app.api.routes import projects, workflow_stages, health, ai, sources, schedules, diagnostics, auth, products, competitors, strategy, generation, evaluation, content_planning, user_settings
 
@@ -8,6 +11,16 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
+
+
+
+@app.exception_handler(StarletteHTTPException)
+async def redacting_http_exception_handler(request, exc):
+    """Every HTTP error body passes through here: exception text (provider SDKs, database drivers) must never carry
+    credentials or connection URLs to the browser. The status code and headers are unchanged."""
+    exc.detail = redact_payload(exc.detail)
+    return await http_exception_handler(request, exc)
+
 
 # Set all CORS enabled origins
 app.add_middleware(

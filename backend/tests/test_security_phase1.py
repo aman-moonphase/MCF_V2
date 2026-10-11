@@ -87,8 +87,8 @@ async def test_malicious_upload_filename_cannot_escape_temp_dir(authenticated_cl
         data={"source_type": "pdf"},
         files={"file": ("../pwned.pdf", b"not really a pdf", "application/pdf")},
     )
-    # Ingestion of the fake PDF fails, but the file was written inside the upload dir, then removed.
-    assert res.status_code == 500
+    # The fake PDF is a user error (422, not a server error), but the file was written inside the upload dir, then removed.
+    assert res.status_code == 422 and "Invalid PDF" in res.json()["detail"]
     assert written and os.path.dirname(written[0]) == os.path.realpath(str(tmp_path / "uploads"))
     assert not target.exists()
     assert not os.path.exists(written[0])

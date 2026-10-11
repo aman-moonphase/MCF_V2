@@ -1,6 +1,9 @@
 """The signed-in user's preferences (GET / PUT /api/settings/me). Only the caller's own row is read or written."""
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -34,12 +37,11 @@ async def get_my_settings(db: AsyncSession = Depends(get_db), user: User = Depen
 @router.put("/me", response_model=UserSettingsResponse)
 async def save_my_settings(body: UserSettingsUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """Save your preferences (validated: IANA zone or null, month/week/day, HH:MM). Returns what was stored."""
-    row = await _own_row(db, user.id)
-    if row is None:
-        row = UserSettings(user_id=user.id)
-        db.add(row)
-    row.timezone = body.timezone
-    row.calendar_default_view = body.calendar_default_view
-    row.default_plan_time = body.default_plan_time
+    # One atomic upsert on the user's own key: two simultaneous first saves (two tabs) both succeed, last one wins.
+    now = datetime.now(timezone.utc)
+    values = {"timezone": body.timezone, "calendar_default_view": body.calendar_default_view,
+              "default_plan_time": body.default_plan_time}
+    statement = insert(UserSettings).values(user_id=user.id, created_at=now, updated_at=now, **values)
+    await db.execute(statement.on_conflict_do_update(index_elements=[UserSettings.user_id], set_={**values, "updated_at": now}))
     await db.commit()
     return _response(await _own_row(db, user.id))
