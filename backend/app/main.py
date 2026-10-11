@@ -5,7 +5,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.core.config import settings
 from app.core.redaction import redact_payload
 from app.db import base as _orm_models  # noqa: F401  (registers every ORM model so string relationships resolve)
-from app.api.routes import projects, workflow_stages, health, ai, sources, schedules, diagnostics, auth, products, competitors, strategy, generation, evaluation, content_planning, user_settings
+from app.api.routes import projects, workflow_stages, health, ai, sources, schedules, diagnostics, auth, products, competitors, strategy, generation, evaluation, content_planning, user_settings, workflow_orchestration
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -47,3 +47,5 @@ app.include_router(schedules.router, prefix=f"{settings.API_V1_STR}/schedules", 
 app.include_router(content_planning.router, prefix=settings.API_V1_STR, tags=["content-planning"])
 app.include_router(diagnostics.router, prefix=f"{settings.API_V1_STR}/diagnostics", tags=["diagnostics"])
 app.include_router(user_settings.router, prefix=f"{settings.API_V1_STR}/settings", tags=["settings"])
+app.include_router(workflow_orchestration.router, prefix=f"{settings.API_V1_STR}/workflow", tags=["workflow-orchestration"])
+
