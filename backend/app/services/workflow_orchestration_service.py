@@ -211,6 +211,11 @@ class WorkflowOrchestrationService:
         project, stages = await self._get_project_and_stages(project_id)
         current = await self.get_state(project_id)
 
+        # If already approved and completed, safely return the completed state
+        # without regenerating, altering content, or resetting progress.
+        if current.get("review_approved") and current.get("status") == "completed":
+            return current
+
         # ── Step 1: Ground Sources ──
         sources = await get_project_source_texts(self.db, project)
         if not sources:
@@ -232,6 +237,8 @@ class WorkflowOrchestrationService:
                 f"Product profile (version {product.profile_version}) generated. "
                 "Human review and approval is required before competitor analysis."
             )
+            project.current_stage = "product-understanding"
+            await self.db.commit()
             return current
 
         if not current.get("profile_approved"):
@@ -240,6 +247,8 @@ class WorkflowOrchestrationService:
             current["halt_reason"] = (
                 f"Product profile (version {current.get('profile_version')}) requires human approval before proceeding."
             )
+            project.current_stage = "product-understanding"
+            await self.db.commit()
             return current
 
         # ── Step 3: Competitor Analysis ──
@@ -247,12 +256,14 @@ class WorkflowOrchestrationService:
             current["status"] = "halted"
             current["current_stage"] = "competitor-analysis"
             current["halt_reason"] = "Competitor analysis requires human review and approval before promotion strategy."
+            project.current_stage = "competitor-analysis"
+            await self.db.commit()
             return current
 
         # ── Step 4: Promotion Strategy ──
         product = await self.products.get_product(UUID(current["product_id"]))
         if not current.get("promotion_strategy"):
-            strategy = await self.strategies.generate(product.id, project_id)
+            strategy = await self.strategies.generate(product.id)
             current["promotion_strategy"] = strategy.strategy
             current["strategy_version"] = strategy.version
             current["strategy_approved"] = False
@@ -262,6 +273,8 @@ class WorkflowOrchestrationService:
                 f"Promotion strategy (version {strategy.version}) generated. "
                 "Human review and approval is required before content generation."
             )
+            project.current_stage = "promotion-strategy"
+            await self.db.commit()
             return current
 
         if not current.get("strategy_approved"):
@@ -270,6 +283,8 @@ class WorkflowOrchestrationService:
             current["halt_reason"] = (
                 f"Promotion strategy (version {current.get('strategy_version')}) requires human approval before proceeding."
             )
+            project.current_stage = "promotion-strategy"
+            await self.db.commit()
             return current
 
         # ── Step 5: Content Type Check ──
@@ -328,6 +343,25 @@ class WorkflowOrchestrationService:
             current["evaluation_current"] = True
 
         # ── Step 8: Human Review & Approval Boundary ──
+        # Update stage statuses and project current stage in DB so progress survives refresh
+        if "source-grounding" in stages and stages["source-grounding"].status != "Completed":
+            stages["source-grounding"].status = "Completed"
+        if "product-understanding" in stages and current.get("profile_approved"):
+            stages["product-understanding"].status = "Completed"
+        if "competitor-analysis" in stages and current.get("competitors_approved"):
+            stages["competitor-analysis"].status = "Completed"
+        if "promotion-strategy" in stages and current.get("strategy_approved"):
+            stages["promotion-strategy"].status = "Completed"
+        if "generate-content" in stages and draft:
+            stages["generate-content"].status = "Completed"
+        if "evaluate-improve" in stages and current.get("evaluation_current"):
+            stages["evaluate-improve"].status = "Completed"
+        if "review-approval" in stages and stages["review-approval"].status != "Completed":
+            stages["review-approval"].status = "In Progress"
+
+        project.current_stage = "review-approval"
+        await self.db.commit()
+
         # Run graph validation through compiled LangGraph to ensure all edge invariants hold
         graph = get_product_workflow_graph()
         workflow_input: ProductWorkflowState = {
@@ -360,7 +394,9 @@ class WorkflowOrchestrationService:
         review_stage = stages.get(REVIEW_STAGE_KEY)
         if review_stage:
             review_stage.status = "Completed"
-            await self.db.commit()
+        project.status = "Completed"
+        project.current_stage = "review-approval"
+        await self.db.commit()
 
         # Update state snapshot
         state = await self.get_state(project_id)

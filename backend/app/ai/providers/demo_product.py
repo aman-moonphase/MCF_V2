@@ -120,6 +120,36 @@ def _labelled(source: str) -> Dict[str, str]:
     return found
 
 
+_NON_NAMES = {
+    "it", "this", "our", "we", "the", "that", "a", "an", "here", "there",
+    "what", "which", "how", "who", "when", "where", "why",
+    "all", "each", "every", "some", "any", "no", "not",
+    "create", "build", "launch", "make", "start", "run",
+    "project", "campaign", "idea", "document", "source", "test",
+    "product", "service", "tool", "app", "application", "platform", "software",
+    "in", "on", "at", "by", "with", "from", "to", "for", "about",
+    "features", "feature", "benefits", "benefit", "pricing", "price",
+    "overview", "description", "details", "summary", "notes", "goals", "goal",
+    "audience", "users", "competitors", "alternatives",
+}
+
+
+def _clean_name(cand: str) -> str:
+    return cand.strip().rstrip(".!?:;,")
+
+
+def _is_valid_name(cand: str) -> bool:
+    cleaned = _clean_name(cand)
+    if not cleaned or not cleaned[0].isupper():
+        return False
+    words = cleaned.split()
+    if not (1 <= len(words) <= 4):
+        return False
+    if words[0].lower() in _NON_NAMES or cleaned.lower() in _NON_NAMES:
+        return False
+    return True
+
+
 def _opening(source: str) -> tuple[Optional[str], str, str]:
     """(name, description, descriptor) from the first sentence."""
     sentences = _sentences(source)
@@ -129,15 +159,61 @@ def _opening(source: str) -> tuple[Optional[str], str, str]:
     label = _LABEL_PATTERN.match(first)
     if label and label.group(1).strip().lower() in ("product", "name", "brand", "product name"):
         first = label.group(2).strip()
-    # "StudioDesk is a booking app for …" — a capitalised name of 1-4 words, then "is a/an/the".
+
+    # 1. Preamble with for/about/introducing/launching/called/named + Candidate + separator/comma/is + rest
+    # e.g. "Create a test project for FocusFlow, a lightweight scheduling tool for independent music tutors"
+    m = re.search(
+        r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})"
+        r"(?:,\s*|\s*[-—–:]\s+|\s+is\s+)((?:an?|the)\s+.+)$",
+        first,
+        re.I,
+    )
+    if m and _is_valid_name(m.group(1)):
+        cand, rest = _clean_name(m.group(1)), m.group(2).strip()
+        return cand, f"{cand} is {rest}.", rest
+
+    # 2. Appositive at start: "FocusFlow, a lightweight scheduling tool for independent music tutors"
+    m = re.match(
+        r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}),\s+((?:an?|the)\s+.+)$",
+        first,
+    )
+    if m and _is_valid_name(m.group(1)):
+        cand, rest = _clean_name(m.group(1)), m.group(2).strip()
+        return cand, f"{cand} is {rest}.", rest
+
+    # 3. Direct "StudioDesk is a booking app for …" — a capitalised name of 1-4 words, then "is a/an/the".
     m = re.match(r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}) is ((?:an?|the) .+)$", first)
-    if m and m.group(1).split()[0].lower() not in ("it", "this", "our", "we", "the", "that"):
-        return m.group(1), f"{first}.", m.group(2)
+    if m and _is_valid_name(m.group(1)):
+        cand = _clean_name(m.group(1))
+        return cand, f"{first}.", m.group(2).strip()
+
+    # 4. Separator in (" - ", " — ", " – ", ": ")
     for separator in (" - ", " — ", " – ", ": "):
         if separator in first:
             head, rest = first.split(separator, 1)
-            if 1 <= len(head.split()) <= 4 and head[:1].isupper():
-                return head.strip(), f"{head.strip()} is {rest.strip()}.", rest.strip()
+            head, rest = head.strip(), rest.strip()
+            pre_m = re.search(
+                r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})$",
+                head,
+                re.I,
+            )
+            if pre_m and _is_valid_name(pre_m.group(1)):
+                cand = _clean_name(pre_m.group(1))
+                return cand, f"{cand} is {rest}.", rest
+            elif _is_valid_name(head):
+                cand = _clean_name(head)
+                return cand, f"{cand} is {rest}.", rest
+
+    # 5. Preamble ending with product name only (e.g. "Create a test project for FocusFlow.")
+    m = re.search(
+        r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})\.?$",
+        first,
+        re.I,
+    )
+    if m and _is_valid_name(m.group(1)):
+        cand = _clean_name(m.group(1))
+        return cand, f"{first}.", first
+
     return None, f"{first}.", first
 
 

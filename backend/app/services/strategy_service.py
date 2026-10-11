@@ -173,6 +173,8 @@ class StrategyService:
         if unknown:
             raise HTTPException(status_code=422, detail=f"Unknown strategy section(s): {', '.join(sorted(unknown))}")
         merged = {**strategy.strategy, **changes}
+        if "channels" in changes and len(changes["channels"]) == 0:
+            raise HTTPException(status_code=422, detail="At least one channel must remain in the strategy.")
         try:
             validated = PromotionStrategyOutput.model_validate(merged).model_dump()
         except ValidationError as e:

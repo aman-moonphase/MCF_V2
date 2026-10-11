@@ -89,6 +89,62 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+
+  /* Centralized cursor interactions across MCF */
+  button:not(:disabled):not([aria-disabled="true"]),
+  [role="button"]:not([aria-disabled="true"]):not([disabled]),
+  [role="tab"]:not([aria-disabled="true"]):not([disabled]),
+  [role="menuitem"]:not([aria-disabled="true"]):not([disabled]),
+  [role="menuitemcheckbox"]:not([aria-disabled="true"]):not([disabled]),
+  [role="menuitemradio"]:not([aria-disabled="true"]):not([disabled]),
+  [role="option"]:not([aria-disabled="true"]):not([disabled]),
+  [role="switch"]:not([aria-disabled="true"]):not([disabled]),
+  [role="checkbox"]:not([aria-disabled="true"]):not([disabled]),
+  [role="radio"]:not([aria-disabled="true"]):not([disabled]),
+  [role="combobox"]:not([aria-disabled="true"]):not([disabled]),
+  a[href]:not([aria-disabled="true"]),
+  input[type="button"]:not(:disabled),
+  input[type="submit"]:not(:disabled),
+  input[type="reset"]:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="file"]:not(:disabled),
+  select:not(:disabled),
+  summary,
+  [data-clickable="true"] {
+    cursor: pointer;
+  }
+
+  /* Disabled controls */
+  button:disabled,
+  button[aria-disabled="true"],
+  [role="button"]:disabled,
+  [role="button"][aria-disabled="true"],
+  [role="tab"]:disabled,
+  [role="tab"][aria-disabled="true"],
+  [role="menuitem"][aria-disabled="true"],
+  [role="option"][aria-disabled="true"],
+  [aria-disabled="true"],
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Text inputs, editable content, and textareas */
+  input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(:disabled),
+  textarea:not(:disabled),
+  [contenteditable="true"] {
+    cursor: text;
+  }
+
+  /* Draggable elements */
+  [draggable="true"] {
+    cursor: grab;
+  }
+  [draggable="true"]:active {
+    cursor: grabbing;
+  }
 }
 
 @layer utilities {

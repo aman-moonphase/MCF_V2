@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check:calendar": "node scripts/check-calendar.mjs"
+    "check:calendar": "node scripts/check-calendar.mjs",
+    "check:api-client": "node scripts/check-api-client.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",

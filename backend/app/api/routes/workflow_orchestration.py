@@ -64,3 +64,40 @@ async def approve_workflow_post(
     """Explicit human approval of the evaluated content version. Completes the workflow."""
     service = WorkflowOrchestrationService(db, user.id)
     return await service.approve_review(project_id, body.version)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Project-scoped router: /api/projects/{project_id}/orchestration/*
+# Matches MCF conventions for project-scoped stage routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+project_router = APIRouter()
+
+
+@project_router.post("/{project_id}/orchestration", response_model=Dict[str, Any])
+async def orchestrate_project(
+    project_id: UUID,
+    body: Optional[OrchestrateRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await orchestrate_workflow(project_id, body, db, user)
+
+
+@project_router.get("/{project_id}/orchestration/status", response_model=Dict[str, Any])
+async def get_project_orchestration_status(
+    project_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await get_orchestration_status(project_id, db, user)
+
+
+@project_router.post("/{project_id}/orchestration/approve", response_model=Dict[str, Any])
+async def approve_project_orchestration(
+    project_id: UUID,
+    body: ReviewApprovalRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await approve_workflow_post(project_id, body, db, user)

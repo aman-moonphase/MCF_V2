@@ -19,7 +19,7 @@ from app.ai.graphs.product_workflow_graph import (
     get_product_workflow_graph,
 )
 from app.core.config import settings
-from tests.test_generate_content import ready_project, make_product
+from tests.test_generate_content import ready_project, make_product, generate
 from tests.test_promotion_strategy import other_client  # noqa: F401
 
 
@@ -280,12 +280,272 @@ async def test_orchestration_api_end_to_end_flow(authenticated_client):
 
 @pytest.mark.asyncio
 async def test_orchestration_api_refuses_cross_user_access(authenticated_client, other_client):
-    """User B cannot orchestrate or read status of User A's project."""
+    """User B cannot orchestrate or read status of User A's project on either route."""
     project_id, _, _ = await ready_project(authenticated_client)
 
-    # other_client should get 404
+    # other_client should get 404 on legacy routes
     forbidden_run = await other_client.post(f"/api/workflow/orchestrate/{project_id}")
     assert forbidden_run.status_code == 404
 
     forbidden_status = await other_client.get(f"/api/workflow/orchestrate/{project_id}/status")
     assert forbidden_status.status_code == 404
+
+    # other_client should also get 404 on project-scoped routes
+    forbidden_run_proj = await other_client.post(f"/api/projects/{project_id}/orchestration")
+    assert forbidden_run_proj.status_code == 404
+
+    forbidden_status_proj = await other_client.get(f"/api/projects/{project_id}/orchestration/status")
+    assert forbidden_status_proj.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_orchestration_api_dual_route_and_initial_status(authenticated_client):
+    """A fresh project has valid initial idle status, accessible via both route conventions."""
+    res = await authenticated_client.post(
+        "/api/projects",
+        json={"title": "Fresh Orchestration Project", "source_type": "Text Idea", "source_reference": "Idea context"},
+    )
+    assert res.status_code == 201, res.text
+    project_id = res.json()["id"]
+
+    # 1. Project-scoped route: /api/projects/{id}/orchestration/status
+    proj_status_res = await authenticated_client.get(f"/api/projects/{project_id}/orchestration/status")
+    assert proj_status_res.status_code == 200, proj_status_res.text
+    proj_status = proj_status_res.json()
+
+    assert proj_status["project_id"] == project_id
+    assert proj_status["current_stage"] == "source-grounding"
+    assert proj_status["status"] == "in_progress"
+    assert proj_status["review_approved"] is False
+    assert proj_status["sources_grounded"] is False
+    assert proj_status["content_version"] is None
+
+    # 2. Workflow route: /api/workflow/orchestrate/{id}/status
+    workflow_status_res = await authenticated_client.get(f"/api/workflow/orchestrate/{project_id}/status")
+    assert workflow_status_res.status_code == 200, workflow_status_res.text
+    workflow_status = workflow_status_res.json()
+
+    # Route parity check
+    assert proj_status == workflow_status
+
+
+@pytest.mark.asyncio
+async def test_orchestration_api_genuine_errors_handled(authenticated_client):
+    """Missing project returns 404 with 'Project not found' on both routes."""
+    import uuid
+    missing_id = str(uuid.uuid4())
+
+    # 1. Missing project returns 404 with 'Project not found' on both routes
+    res_proj = await authenticated_client.get(f"/api/projects/{missing_id}/orchestration/status")
+    assert res_proj.status_code == 404
+    assert res_proj.json()["detail"] == "Project not found"
+
+    res_wf = await authenticated_client.get(f"/api/workflow/orchestrate/{missing_id}/status")
+    assert res_wf.status_code == 404
+    assert res_wf.json()["detail"] == "Project not found"
+
+
+@pytest.mark.asyncio
+async def test_orchestration_api_unauthenticated_rejected(client):
+    """Unauthenticated requests are rejected with 401 Unauthorized on both routes."""
+    import uuid
+    missing_id = str(uuid.uuid4())
+
+    unauth_proj = await client.get(f"/api/projects/{missing_id}/orchestration/status")
+    assert unauth_proj.status_code == 401
+
+    unauth_wf = await client.get(f"/api/workflow/orchestrate/{missing_id}/status")
+    assert unauth_wf.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_orchestration_api_halts_at_unapproved_understanding_like_focusflow(authenticated_client):
+    """When a project with ingested sources runs orchestration, it generates profile and halts for approval."""
+    # Create project and ingest source (exact FocusFlow pre-orchestration state)
+    res = await authenticated_client.post(
+        "/api/projects",
+        json={"title": "FocusFlow Scheduler", "source_type": "Text Idea", "source_reference": "FocusFlow scheduling tool"},
+    )
+    assert res.status_code == 201, res.text
+    project_id = res.json()["id"]
+
+    source_content = (
+        "FocusFlow is a calendar and task scheduling assistant for solo founders. "
+        "It eliminates meeting fragmentation by grouping appointments into focused time blocks."
+    )
+    ingest_res = await authenticated_client.post(
+        f"/api/projects/{project_id}/sources/ingest",
+        data={"source_type": "text", "content": source_content},
+    )
+    assert ingest_res.status_code == 200, ingest_res.text
+
+    # Run orchestration via project endpoint with default options (empty body / no instructions)
+    orch_res = await authenticated_client.post(f"/api/projects/{project_id}/orchestration", json={"pillar_index": 0})
+    assert orch_res.status_code == 200, orch_res.text
+    orch_data = orch_res.json()
+
+    # Must halt at product-understanding awaiting human approval
+    assert orch_data["status"] == "halted"
+    assert orch_data["current_stage"] == "product-understanding"
+    assert orch_data["profile_approved"] is False
+    assert orch_data["product_profile"] is not None
+    assert "Human review and approval is required" in orch_data["halt_reason"]
+
+
+@pytest.mark.asyncio
+async def test_orchestration_api_generates_strategy_and_halts_for_approval(authenticated_client):
+    """When profile and competitors are approved but strategy is ungenerated, orchestration generates strategy and halts."""
+    from tests.test_promotion_strategy import make_product, approve_competitors
+    project_id, product_id = await make_product(authenticated_client)
+    await approve_competitors(authenticated_client, project_id, product_id, with_evidence=True)
+
+    # Trigger orchestration: should call StrategyService.generate(product.id) without argument error and halt
+    orch_res = await authenticated_client.post(f"/api/projects/{project_id}/orchestration", json={"pillar_index": 0})
+    assert orch_res.status_code == 200, orch_res.text
+    orch_data = orch_res.json()
+
+    assert orch_data["status"] == "halted"
+    assert orch_data["current_stage"] == "promotion-strategy"
+    assert orch_data["strategy_approved"] is False
+    assert orch_data["promotion_strategy"] is not None
+    assert "Promotion strategy (version 1) generated" in orch_data["halt_reason"]
+
+
+@pytest.mark.asyncio
+async def test_orchestration_status_tracks_edited_versions_evaluations_and_approval(authenticated_client):
+    """Regression test:
+    1. Post v1 generated -> evaluate v1 -> orchestration status pauses at review boundary (v1).
+    2. Post edited to v2 -> orchestration status moves out of pause boundary (eval stale).
+    3. Evaluate v2 -> orchestration status pauses at review boundary for v2 (not v1).
+    4. Post edited to v3 -> attempting to approve stale v1/v2 or unevaluated v3 fails.
+    5. Evaluate v3 -> explicit human approval of v3 succeeds.
+    6. Orchestration status reflects 'completed', review_approved=True, approved_version=3.
+    7. Re-running orchestration preserves approved post and returns completed without mutating draft.
+    """
+    project_id, _, _ = await ready_project(authenticated_client)
+
+    # 1. Generate Post v1
+    gen_res = await generate(authenticated_client, project_id)
+    assert gen_res["draft"]["version"] == 1
+
+    # Check status before evaluation: in_progress at evaluate-improve
+    s0 = (await authenticated_client.get(f"/api/projects/{project_id}/orchestration/status")).json()
+    assert s0["content_version"] == 1
+    assert s0["evaluation_version"] is None
+    assert s0["evaluation_current"] is False
+    assert s0["current_stage"] == "evaluate-improve"
+    assert s0["status"] == "in_progress"
+    assert s0["review_approved"] is False
+
+    # Evaluate v1
+    ev1 = await authenticated_client.post(f"/api/projects/{project_id}/evaluation", json={"version": 1})
+    assert ev1.status_code == 200, ev1.text
+
+    # Status after v1 evaluation: paused at approval boundary for v1
+    s1 = (await authenticated_client.get(f"/api/projects/{project_id}/orchestration/status")).json()
+    assert s1["content_version"] == 1
+    assert s1["evaluation_version"] == 1
+    assert s1["evaluation_current"] is True
+    assert s1["status"] == "paused_at_approval_boundary"
+    assert s1["current_stage"] == "review-approval"
+    assert s1["review_approved"] is False
+    assert "v1" in s1["halt_reason"]
+
+    # 2. Hand-edit draft to v2
+    edit_v2 = await authenticated_client.patch(
+        f"/api/projects/{project_id}/generated-content",
+        json={"cta": "Message us to schedule your music tutor trial.", "version": 1},
+    )
+    assert edit_v2.status_code == 200, edit_v2.text
+    assert edit_v2.json()["draft"]["version"] == 2
+
+    # Status after v2 edit: evaluation is now stale (v1 != v2), no longer paused at approval boundary
+    s2_pre = (await authenticated_client.get(f"/api/projects/{project_id}/orchestration/status")).json()
+    assert s2_pre["content_version"] == 2
+    assert s2_pre["evaluation_version"] == 1
+    assert s2_pre["evaluation_current"] is False
+    assert s2_pre["status"] == "in_progress"
+    assert s2_pre["current_stage"] == "evaluate-improve"
+    assert s2_pre["review_approved"] is False
+
+    # 3. Evaluate v2
+    ev2 = await authenticated_client.post(f"/api/projects/{project_id}/evaluation", json={"version": 2})
+    assert ev2.status_code == 200, ev2.text
+
+    s2_post = (await authenticated_client.get(f"/api/projects/{project_id}/orchestration/status")).json()
+    assert s2_post["content_version"] == 2
+    assert s2_post["evaluation_version"] == 2
+    assert s2_post["evaluation_current"] is True
+    assert s2_post["status"] == "paused_at_approval_boundary"
+    assert s2_post["current_stage"] == "review-approval"
+    assert s2_post["review_approved"] is False
+    assert "v2" in s2_post["halt_reason"]
+
+    # 4. Hand-edit draft to v3
+    edit_v3 = await authenticated_client.patch(
+        f"/api/projects/{project_id}/generated-content",
+        json={"body": "FocusFlow streamlines independent music tutor schedules.", "version": 2},
+    )
+    assert edit_v3.status_code == 200, edit_v3.text
+    assert edit_v3.json()["draft"]["version"] == 3
+
+    # Attempting to approve obsolete version 1 fails
+    bad_v1 = await authenticated_client.post(
+        f"/api/projects/{project_id}/orchestration/approve", json={"version": 1}
+    )
+    assert bad_v1.status_code in (400, 409), bad_v1.text
+
+    # Attempting to approve obsolete version 2 fails
+    bad_v2 = await authenticated_client.post(
+        f"/api/projects/{project_id}/orchestration/approve", json={"version": 2}
+    )
+    assert bad_v2.status_code in (400, 409), bad_v2.text
+
+    # Attempting to approve unevaluated version 3 fails
+    bad_v3 = await authenticated_client.post(
+        f"/api/projects/{project_id}/orchestration/approve", json={"version": 3}
+    )
+    assert bad_v3.status_code in (400, 409), bad_v3.text
+
+    # 5. Evaluate v3
+    ev3 = await authenticated_client.post(f"/api/projects/{project_id}/evaluation", json={"version": 3})
+    assert ev3.status_code == 200, ev3.text
+
+    # 6. Explicit human approval of v3 via orchestration approve route
+    app_res = await authenticated_client.post(
+        f"/api/projects/{project_id}/orchestration/approve", json={"version": 3}
+    )
+    assert app_res.status_code == 200, app_res.text
+    app_data = app_res.json()
+    assert app_data["status"] == "completed"
+    assert app_data["review_approved"] is True
+    assert app_data["approved_version"] == 3
+    assert app_data["content_version"] == 3
+    assert app_data["halt_reason"] is None
+
+    # Check status endpoint derives authoritative completed state
+    final_status = (await authenticated_client.get(f"/api/projects/{project_id}/orchestration/status")).json()
+    assert final_status["status"] == "completed"
+    assert final_status["review_approved"] is True
+    assert final_status["approved_version"] == 3
+    assert final_status["content_version"] == 3
+    assert final_status["evaluation_version"] == 3
+    assert final_status["evaluation_current"] is True
+    assert final_status["halt_reason"] is None
+
+    # 7. Re-running orchestration on approved project safely returns completed state without mutating post
+    re_orch = await authenticated_client.post(
+        f"/api/projects/{project_id}/orchestration", json={"pillar_index": 0}
+    )
+    assert re_orch.status_code == 200, re_orch.text
+    re_data = re_orch.json()
+    assert re_data["status"] == "completed"
+    assert re_data["review_approved"] is True
+    assert re_data["approved_version"] == 3
+    assert re_data["content_version"] == 3
+
+    # Verify draft in DB remains approved and at version 3
+    draft_check = (await authenticated_client.get(f"/api/projects/{project_id}/generated-content")).json()["draft"]
+    assert draft_check["version"] == 3
+    assert draft_check["status"] == "approved"
+    assert draft_check["approved_version"] == 3

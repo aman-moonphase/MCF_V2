@@ -12,6 +12,7 @@ interface Props {
   activeStage: WorkflowStage;
   onComplete: () => Promise<void> | void;
   onSelectStage?: (stageId: string) => void;
+  onRefreshOrchestration?: () => Promise<void> | void;
 }
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -64,7 +65,7 @@ function Finding({ f }: { f: EvaluationFinding }) {
 
 /** Evaluate & Improve (product workflow): rule-based evaluation of the SAVED post version. It never edits the post;
  *  improvements are made in Generate Content, then the new saved version is evaluated again. */
-export function EvaluateImproveStage({ project, activeStage, onComplete, onSelectStage }: Props) {
+export function EvaluateImproveStage({ project, activeStage, onComplete, onSelectStage, onRefreshOrchestration }: Props) {
   const [state, setState] = useState<EvaluationState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState<'evaluate' | 'continue' | null>(null);
@@ -117,6 +118,9 @@ export function EvaluateImproveStage({ project, activeStage, onComplete, onSelec
     try {
       setState(await EvaluationService.evaluate(project.id, draft.version));
       toast.success(`Version ${draft.version} evaluated. The post was not changed.`);
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } catch (e) {
       setError(errorMessage(e));
       toast.error(errorMessage(e));
@@ -129,6 +133,9 @@ export function EvaluateImproveStage({ project, activeStage, onComplete, onSelec
     setBusy('continue');
     try {
       await onComplete();
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } finally {
       setBusy(null);
     }

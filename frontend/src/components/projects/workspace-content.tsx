@@ -2,27 +2,43 @@
 
 import React from 'react';
 import { WorkflowStage, Project } from '@/types/project';
-import { Bot, Edit3, FileText, ArrowRight } from 'lucide-react';
+import { Bot, FileText, ArrowRight } from 'lucide-react';
 import { hasDedicatedStageUI, stageComponentFor } from './stage-registry';
 import { getStageLabel } from '@/lib/workflow-stages';
 import { AiModeIndicator } from '@/components/ai-mode-indicator';
 import { ScheduleDialog } from '@/components/schedule-dialog';
 import { Calendar } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { ProductWorkflowState } from '@/lib/services/workflow-orchestration.service';
+import { OrchestrationPanel } from './orchestration-panel';
+import { isProductWorkflow } from './stage-registry';
 
 interface WorkspaceContentProps {
   project: Project;
   activeStage: WorkflowStage;
   onAdvanceStage: () => Promise<void> | void;
   onSelectStage?: (stageId: string) => void;
+  orchestrationState?: ProductWorkflowState | null;
+  isOrchestrationLoading?: boolean;
+  orchestrationError?: string | null;
+  onOrchestrationRetry?: () => void;
+  onOrchestrationUpdate?: (newState: ProductWorkflowState) => void;
+  onProjectRefresh?: () => Promise<void>;
+  onOrchestrationRefresh?: () => Promise<void> | void;
 }
 
-export function WorkspaceContent({ project, activeStage, onAdvanceStage, onSelectStage }: WorkspaceContentProps) {
+export function WorkspaceContent({
+  project,
+  activeStage,
+  onAdvanceStage,
+  onSelectStage,
+  orchestrationState,
+  isOrchestrationLoading,
+  orchestrationError,
+  onOrchestrationRetry,
+  onOrchestrationUpdate,
+  onProjectRefresh,
+  onOrchestrationRefresh,
+}: WorkspaceContentProps) {
   const [isScheduleOpen, setIsScheduleOpen] = React.useState(false);
   const [isAdvancing, setIsAdvancing] = React.useState(false);
 
@@ -31,6 +47,9 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage, onSelec
     setIsAdvancing(true);
     try {
       await onAdvanceStage();
+      if (onOrchestrationRefresh) {
+        await onOrchestrationRefresh();
+      }
     } finally {
       setIsAdvancing(false);
     }
@@ -39,7 +58,15 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage, onSelec
   const renderStageContent = () => {
     const StageComponent = stageComponentFor(project, activeStage.type);
     if (StageComponent) {
-      return <StageComponent project={project} activeStage={activeStage} onComplete={onAdvanceStage} onSelectStage={onSelectStage} />;
+      return (
+        <StageComponent
+          project={project}
+          activeStage={activeStage}
+          onComplete={onAdvanceStage}
+          onSelectStage={onSelectStage}
+          onRefreshOrchestration={onOrchestrationRefresh}
+        />
+      );
     }
 
     switch (activeStage.type) {
@@ -147,6 +174,23 @@ export function WorkspaceContent({ project, activeStage, onAdvanceStage, onSelec
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-8 lg:p-12">
         <div className="max-w-4xl mx-auto">
+          {isProductWorkflow(project) && (
+            <OrchestrationPanel
+              project={project}
+              state={orchestrationState ?? null}
+              isLoading={isOrchestrationLoading ?? false}
+              error={orchestrationError ?? null}
+              onRetry={onOrchestrationRetry}
+              onStateUpdate={onOrchestrationUpdate ?? (() => {})}
+              onProjectRefresh={onProjectRefresh ?? (async () => {})}
+              onSelectStage={(stageType) => {
+                const target = project.stages.find((s) => s.type === stageType);
+                if (target && onSelectStage) {
+                  onSelectStage(target.id);
+                }
+              }}
+            />
+          )}
           {renderStageContent()}
         </div>
       </div>

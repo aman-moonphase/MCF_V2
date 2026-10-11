@@ -48,4 +48,5 @@ app.include_router(content_planning.router, prefix=settings.API_V1_STR, tags=["c
 app.include_router(diagnostics.router, prefix=f"{settings.API_V1_STR}/diagnostics", tags=["diagnostics"])
 app.include_router(user_settings.router, prefix=f"{settings.API_V1_STR}/settings", tags=["settings"])
 app.include_router(workflow_orchestration.router, prefix=f"{settings.API_V1_STR}/workflow", tags=["workflow-orchestration"])
+app.include_router(workflow_orchestration.project_router, prefix=f"{settings.API_V1_STR}/projects", tags=["workflow-orchestration"])
 

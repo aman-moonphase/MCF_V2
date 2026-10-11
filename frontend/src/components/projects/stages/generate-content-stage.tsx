@@ -12,6 +12,8 @@ interface Props {
   project: Project;
   activeStage: WorkflowStage;
   onComplete: () => Promise<void> | void;
+  onSelectStage?: (stageId: string) => void;
+  onRefreshOrchestration?: () => Promise<void> | void;
 }
 
 interface Edits {
@@ -130,7 +132,7 @@ function CompetitorInsights({ findings }: { findings: CompetitorFindings }) {
   );
 }
 
-export function GenerateContentStage({ project, activeStage, onComplete }: Props) {
+export function GenerateContentStage({ project, activeStage, onComplete, onRefreshOrchestration }: Props) {
   const [state, setState] = useState<GenerationState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState<'generate' | 'save' | 'continue' | null>(null);
@@ -215,6 +217,9 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
     try {
       apply(await GenerationService.generate(project.id, pillarIndex, instructions));
       toast.success(draft ? 'New draft generated' : 'LinkedIn post generated');
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } catch (e) {
       setError(errorMessage(e));
       toast.error(errorMessage(e));
@@ -232,6 +237,9 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
         hook: edits.hook, alternativeHooks: edits.alternativeHooks, body: edits.body, cta: edits.cta, hashtags: parseTags(edits.hashtags),
       }, draft.version));
       toast.success('Post saved');
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } catch (e) {
       setError(errorMessage(e));
       toast.error(errorMessage(e));
@@ -244,6 +252,9 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
     setBusy('continue');
     try {
       await onComplete();
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } finally {
       setBusy(null);
     }

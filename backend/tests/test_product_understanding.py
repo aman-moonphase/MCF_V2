@@ -282,3 +282,94 @@ async def test_each_project_only_uses_its_own_sources(authenticated_client):
     assert ledger["id"] != care["id"]
     assert care["name"] == "CareNest" and "LedgerLeaf" not in str(care["profile"])
     assert "CareNest" not in str(ledger["profile"]) and "Zoho" not in str(care["profile"])
+
+
+# ─── 13. Product name extraction regressions ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_extracts_product_name_from_preamble_focusflow_description(authenticated_client):
+    """Extracts FocusFlow from sentences like 'Create a test project for FocusFlow, a lightweight...'"""
+    source = (
+        "Create a test project for FocusFlow, a lightweight scheduling tool for independent music tutors.\n"
+        "Features:\n"
+        "- Lesson booking links\n"
+        "- Reminder emails 24 hours before lessons\n"
+        "- Attendance notes\n\n"
+        "Target audience: Independent music tutors.\n"
+        "Goal: Promote the product through LinkedIn social posts."
+    )
+    project_id = await make_project(authenticated_client, source=source, title="FocusFlow Launch")
+    product = await understand(authenticated_client, project_id)
+
+    assert product["name"] == "FocusFlow"
+    assert product["profile"]["name"] == "FocusFlow"
+    assert product["profile"]["category"] == "lightweight scheduling tool"
+    assert product["profile"]["target_audience"] == "Independent music tutors"
+    assert product["profile"]["key_features"] == [
+        "Lesson booking links",
+        "Reminder emails 24 hours before lessons",
+        "Attendance notes",
+    ]
+    # Genuinely missing fields remain uninvented
+    assert product["profile"]["business_model"] is None
+    assert product["profile"]["differentiators"] == []
+    assert product["profile"]["known_competitors"] == []
+
+
+@pytest.mark.asyncio
+async def test_extracts_product_name_from_appositive_description(authenticated_client):
+    """Extracts name from appositive opening 'FocusFlow, a lightweight scheduling tool...'"""
+    source = (
+        "FocusFlow, a lightweight scheduling tool for independent music tutors.\n"
+        "Features:\n"
+        "- Lesson booking links"
+    )
+    project_id = await make_project(authenticated_client, source=source, title="Appositive Test")
+    product = await understand(authenticated_client, project_id)
+
+    assert product["name"] == "FocusFlow"
+    assert product["profile"]["name"] == "FocusFlow"
+
+
+@pytest.mark.asyncio
+async def test_preserves_genuinely_missing_product_name_without_inventing(authenticated_client):
+    """When no product name is present, profile name remains None and is not invented."""
+    source = (
+        "A lightweight scheduling tool for independent music tutors.\n"
+        "Features:\n"
+        "- Lesson booking links\n"
+        "- Reminder emails 24 hours before lessons"
+    )
+    project_id = await make_project(authenticated_client, source=source, title="Generic Scheduler")
+    product = await understand(authenticated_client, project_id)
+
+    # Name is not extracted/invented from generic prose
+    assert product["profile"]["name"] is None
+    assert "name" in product["profile"]["missing_fields"]
+    # Clarification question is asked for the missing name
+    assert any("name" in q.get("fields", []) for q in product["clarification_questions"])
+
+
+def test_build_demo_profile_name_extraction_unit():
+    """Unit test covering multiple variations of product name extraction and genuinely missing cases."""
+    from app.ai.generation_context import generation_context
+    from app.ai.providers.demo_product import build_demo_profile
+
+    cases = [
+        ("Create a test project for FocusFlow, a lightweight scheduling tool for music tutors.", "FocusFlow"),
+        ("FocusFlow, a lightweight scheduling tool for independent music tutors.", "FocusFlow"),
+        ("FocusFlow is a lightweight scheduling tool for music tutors.", "FocusFlow"),
+        ("FocusFlow - a lightweight scheduling tool for music tutors.", "FocusFlow"),
+        ("Project for FocusFlow: a lightweight scheduling tool for music tutors.", "FocusFlow"),
+        ("We are launching FocusFlow, a lightweight scheduling tool for tutors.", "FocusFlow"),
+        ("A lightweight scheduling tool for independent music tutors.", None),
+        ("This is a tool for scheduling meetings.", None),
+        ("Features:\n- Lesson booking links", None),
+        ("In 2024, our team started building software.", None),
+        ("We need marketing content for our scheduling software.", None),
+    ]
+
+    for src, expected_name in cases:
+        with generation_context({"input_text": src}, "product-understanding"):
+            profile = build_demo_profile("")
+            assert profile.get("name") == expected_name, f"Failed for source: {src} -> got {profile.get('name')}"

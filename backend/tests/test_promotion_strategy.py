@@ -274,3 +274,41 @@ async def test_projects_outside_the_product_workflow_are_unchanged(authenticated
     ok = await authenticated_client.patch(f"/api/projects/{project_id}/stages/content-type",
                                           json={"status": "Completed", "data": {"approved_type": "Carousel"}})
     assert ok.status_code == 200 and "overrides_strategy" not in ok.json()["data"]
+
+
+@pytest.mark.asyncio
+async def test_remove_channel_preserves_linkedin_and_bumps_version(authenticated_client):
+    project_id, product_id = await make_product(authenticated_client)
+    await approve_competitors(authenticated_client, project_id, product_id)
+    s = await generate(authenticated_client, product_id)
+    initial_version = s["version"]
+    initial_channels = s["strategy"]["channels"]
+
+    # Initial strategy has channels (e.g., LinkedIn and others)
+    assert any(c["channel"] == "LinkedIn" for c in initial_channels)
+    linkedin_only = [c for c in initial_channels if c["channel"] == "LinkedIn"]
+    assert len(linkedin_only) >= 1
+
+    # Attempting to remove all channels should fail validation with 422
+    empty_res = await authenticated_client.patch(url(product_id), json={"strategy": {"channels": []}})
+    assert empty_res.status_code == 422
+    assert "At least one channel must remain" in empty_res.json()["detail"]
+
+    # Remove non-LinkedIn channel(s) and retain LinkedIn as the only active channel
+    res = await authenticated_client.patch(url(product_id), json={"strategy": {"channels": linkedin_only}})
+    assert res.status_code == 200
+    updated = res.json()
+
+    # Verify version was incremented, status became draft, and channels has only LinkedIn
+    assert updated["version"] == initial_version + 1
+    assert updated["status"] == "draft"
+    assert "channels" in updated["edited_sections"]
+    active_channels = updated["strategy"]["channels"]
+    assert len(active_channels) == 1
+    assert active_channels[0]["channel"] == "LinkedIn"
+
+    # Approving the new version succeeds
+    app_res = await approve(authenticated_client, project_id, product_id, updated["version"])
+    assert app_res.status_code == 200
+    assert app_res.json()["status"] == "approved"
+    assert app_res.json()["approved_version"] == updated["version"]
