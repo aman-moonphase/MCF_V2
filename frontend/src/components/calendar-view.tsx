@@ -16,6 +16,7 @@ import { CancelPlanDialog } from '@/components/calendar/cancel-plan-dialog';
 import { ScheduleDialog } from './schedule-dialog';
 import { CalendarApiError, ScheduleService } from '@/lib/services/schedule.service';
 import { ProductService, type Product } from '@/lib/services/product.service';
+import { useUserSettings } from '@/lib/use-user-settings';
 import {
   CALENDAR_VIEWS,
   type CalendarViewMode,
@@ -70,7 +71,10 @@ export function CalendarView() {
   const today = useBrowserValue(clientNow);
   const [chosenAnchor, setAnchor] = useState<Date | null>(null);
   const anchor = chosenAnchor ?? today;
-  const [view, setView] = useState<CalendarViewMode>('month');
+  // Opens in the user's saved default view (Settings) until a view is chosen here.
+  const preferences = useUserSettings();
+  const [chosenView, setView] = useState<CalendarViewMode | null>(null);
+  const view: CalendarViewMode = chosenView ?? preferences.settings.calendarDefaultView;
   const [productId, setProductId] = useState<string>(ALL_PRODUCTS);
   const [includeCancelled, setIncludeCancelled] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
@@ -93,7 +97,7 @@ export function CalendarView() {
   const label = anchor ? rangeLabel(view, anchor) : '';
 
   // One key per request; a response is shown only if it belongs to the current key (late responses are ignored).
-  const requestKey = range && timeZone
+  const requestKey = range && timeZone && preferences.status !== 'loading'  // no Month fetch before a saved Week/Day view
     ? JSON.stringify([range.start.getTime(), range.end.getTime(), timeZone, productId, includeCancelled, reloadKey])
     : null;
   useEffect(() => {

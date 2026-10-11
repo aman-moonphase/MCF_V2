@@ -76,3 +76,53 @@ def build_embedding_config() -> AIConfig:
         temperature=settings.AI_TEMPERATURE,
         timeout=settings.AI_TIMEOUT_SECONDS,
     )
+
+
+def ai_mode_summary() -> dict:
+    """Which AI mode generation uses — from configuration only. No secrets, no provider object, no external call,
+    and never a claim that the connection works (`connection_verified` is always False)."""
+    from ..core.config import settings
+    from .usage import CLAUDE_RATES
+
+    provider = normalize_provider_name(settings.AI_PROVIDER)
+    if provider == "demo":
+        return {"mode": "demo", "provider": "demo", "model": None, "configured": True, "configuration_problem": None,
+                "credentials_configured": False, "may_incur_charges": False, "connection_verified": False,
+                "cost_estimates_available": False, "single_attempt": settings.AI_SINGLE_ATTEMPT}
+    if provider == "claude":
+        model = settings.CLAUDE_MODEL
+        has_key = bool((settings.ANTHROPIC_API_KEY or "").strip())
+        problem = (None if has_key else "ANTHROPIC_API_KEY is not set.") or claude_model_problem(model)
+        rates_known = model in CLAUDE_RATES
+    elif provider == "openai":
+        model = settings.AI_MODEL_NAME
+        has_key = bool((settings.OPENAI_API_KEY or "").strip())
+        problem = None if has_key else "OPENAI_API_KEY is not set."
+        rates_known = False
+    else:
+        model, has_key, problem, rates_known = None, False, f"Unsupported AI_PROVIDER '{provider}'.", False
+    return {"mode": "real", "provider": provider, "model": model, "configured": problem is None,
+            "configuration_problem": problem, "credentials_configured": has_key, "may_incur_charges": True,
+            "connection_verified": False, "cost_estimates_available": rates_known,
+            "single_attempt": settings.AI_SINGLE_ATTEMPT}
+
+
+def embedding_summary() -> dict:
+    """Embedding provider metadata from configuration only (no provider object, no external call): provider, model,
+    whether its vectors carry meaning (semantic retrieval) and whether its credentials are configured."""
+    import os
+
+    from ..core.config import settings
+    from .providers.embedding.demo import DemoEmbeddingProvider
+
+    provider = settings.resolved_embedding_provider
+    if provider == "demo":
+        return {"provider": "demo", "model": DemoEmbeddingProvider.model_name, "semantic": DemoEmbeddingProvider.semantic,
+                "credentials_required": False, "credentials_configured": False, "problem": None}
+    if provider == "openai":
+        has_key = bool((settings.OPENAI_API_KEY or "").strip())
+        return {"provider": "openai", "model": os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                "semantic": True, "credentials_required": True, "credentials_configured": has_key,
+                "problem": None if has_key else "OPENAI_API_KEY is missing for embeddings."}
+    return {"provider": provider, "model": None, "semantic": False, "credentials_required": False,
+            "credentials_configured": False, "problem": f"Unsupported EMBEDDING_PROVIDER '{provider}'."}

@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { InstantError, formatInstant, isSupportedTimeZone, knownTimeZones, zonedDateTimeToIso } from '@/lib/calendar-time';
 import { localTimeZone } from '@/lib/calendar-range';
+import { useUserSettings } from '@/lib/use-user-settings';
 import { NOTES_MAX, dialogBody, dialogContent, dialogFooter, dialogHeader, inputField, sectionTitle } from '@/components/calendar/dialog-layout';
 import { PlanningApiError, ScheduleService } from '@/lib/services/schedule.service';
 import type { PlannedEntry, PlanningRefusal } from '@/types/schedule';
@@ -63,12 +64,15 @@ function errorMessage(error: PlanningApiError): string {
 /** Plan an approved post on the calendar. Planning only: nothing is published or sent anywhere. */
 export function PlanPostDialog({ open, onOpenChange, post, onPlanned }: PlanPostDialogProps) {
   const [date, setDate] = useState('');
-  const [time, setTime] = useState('09:00');
+  // Defaults from the user's saved preferences (Settings); anything typed here takes precedence.
+  const preferences = useUserSettings().settings;
+  const [timeInput, setTime] = useState<string | null>(null);
+  const time = timeInput ?? preferences.defaultPlanTime;
   // Detected in the browser only (never the server's zone); the user can change it.
   const detectedZone = useSyncExternalStore(noSubscription, localTimeZone, () => '');
   const [zoneInput, setZoneInput] = useState<string | null>(null);
   const now = useSyncExternalStore(subscribeClock, readClock, () => 0);
-  const timeZone = zoneInput ?? detectedZone;
+  const timeZone = zoneInput ?? (preferences.timezone || detectedZone);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const inFlight = useRef(false);
@@ -83,7 +87,7 @@ export function PlanPostDialog({ open, onOpenChange, post, onPlanned }: PlanPost
 
   const reset = () => {
     setDate('');
-    setTime('09:00');
+    setTime(null);
     setZoneInput(null);
     setNotes('');
     setFailure(null);
@@ -194,7 +198,7 @@ export function PlanPostDialog({ open, onOpenChange, post, onPlanned }: PlanPost
                   <Input id="plan-zone" list="plan-zone-options" required value={timeZone} className={field} spellCheck={false}
                          autoComplete="off" onChange={(e) => setZoneInput(e.target.value.trim())} aria-describedby="plan-zone-help" />
                   <datalist id="plan-zone-options">{zones.map((z) => <option key={z} value={z} />)}</datalist>
-                  <p id="plan-zone-help" className="text-xs text-muted-foreground">Detected from your browser. Change it if the post is planned for another region.</p>
+                  <p id="plan-zone-help" className="text-xs text-muted-foreground">{preferences.timezone ? 'From your saved preferences' : 'Detected from your browser'}. Change it if the post is planned for another region.</p>
                 </div>
               </fieldset>
 

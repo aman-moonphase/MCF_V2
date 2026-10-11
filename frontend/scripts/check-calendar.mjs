@@ -13,6 +13,7 @@
  *     overlap flagged), and the planning service: request shape, refusal reasons passed through, error kinds.
  *  5. Reschedule / cancel (Step 8): card actions per entry kind, lock_version on the wire, conflicts surfaced and
  *     never retried, error kinds, local refusals that send nothing, and the prefill helper.
+ *  6. Preferences (Step 10): the settings service used for the calendar's default view and the planning defaults.
  *
  * No network, no API calls, no data.
  */
@@ -44,7 +45,8 @@ function compile() {
   const program = ts.createProgram(
     [path.join(SRC, 'components/calendar/month-grid.tsx'), path.join(SRC, 'components/calendar/agenda-list.tsx'),
      path.join(SRC, 'lib/calendar-range.ts'), path.join(SRC, 'lib/calendar-time.ts'),
-     path.join(SRC, 'lib/services/schedule.service.ts'), path.join(SRC, 'components/calendar/calendar-entry-card.tsx')],
+     path.join(SRC, 'lib/services/schedule.service.ts'), path.join(SRC, 'components/calendar/calendar-entry-card.tsx'),
+     path.join(SRC, 'lib/services/settings.service.ts')],
     {
       module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
       skipLibCheck: true, outDir, rootDir: SRC, baseUrl: FRONTEND, paths: { '@/*': ['./src/*'] }, noEmitOnError: false,
@@ -388,6 +390,53 @@ async function rescheduleCancelChecks(outDir) {
   console.log('reschedule/cancel service: OK (lock_version sent, conflicts surfaced not retried, errors classified, nothing sent when invalid)');
 }
 
+/** Step 10: the preferences service the calendar and Add to Calendar use (mocked fetch). */
+async function settingsServiceChecks(outDir) {
+  const { SettingsService, SettingsApiError, DEFAULT_SETTINGS } = load(path.join(outDir, 'lib/services/settings.service.js'));
+  assert.deepEqual([DEFAULT_SETTINGS.calendarDefaultView, DEFAULT_SETTINGS.defaultPlanTime, DEFAULT_SETTINGS.timezone], ['month', '09:00', null]);
+  const calls = [];
+  let reply = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    if (reply instanceof Error) throw reply;
+    return reply;
+  };
+  const respond = (status, body) => ({ ok: status >= 200 && status < 300, status, statusText: String(status), json: async () => body });
+  const fails = async (promise) => promise.then(() => assert.fail('expected SettingsApiError'), (e) => {
+    assert.ok(e instanceof SettingsApiError, String(e));
+    return e;
+  });
+  try {
+    reply = respond(200, { timezone: 'Asia/Kolkata', calendar_default_view: 'week', default_plan_time: '10:30', saved: true, updated_at: '2026-10-11T10:00:00Z' });
+    const got = await SettingsService.get();
+    assert.equal(new URL(calls[0].url).pathname, '/api/settings/me');
+    assert.deepEqual([got.timezone, got.calendarDefaultView, got.defaultPlanTime, got.saved], ['Asia/Kolkata', 'week', '10:30', true]);
+
+    reply = respond(200, { timezone: null, calendar_default_view: 'day', default_plan_time: '08:05', saved: true, updated_at: '2026-10-11T10:01:00Z' });
+    const saved = await SettingsService.save({ timezone: '   ', calendarDefaultView: 'day', defaultPlanTime: '08:05' });
+    assert.equal(calls[1].init.method, 'PUT');
+    // Exactly the three preferences, snake_case; a blank zone is sent as null (= browser zone). Nothing else.
+    assert.deepEqual(JSON.parse(calls[1].init.body), { timezone: null, calendar_default_view: 'day', default_plan_time: '08:05' });
+    assert.deepEqual([saved.calendarDefaultView, saved.timezone], ['day', null]);
+
+    reply = respond(422, { detail: [{ loc: ['body', 'timezone'], msg: 'Value error, must be a valid IANA time zone', type: 'value_error' }] });
+    const invalid = await fails(SettingsService.save({ timezone: 'Mars/Base', calendarDefaultView: 'month', defaultPlanTime: '09:00' }));
+    assert.equal(invalid.kind, 'validation');
+    assert.match(invalid.message, /IANA/);
+    reply = respond(401, { detail: 'Not authenticated' });
+    assert.equal((await fails(SettingsService.get())).kind, 'auth');
+    reply = respond(500, { detail: 'boom' });
+    assert.equal((await fails(SettingsService.save({ timezone: null, calendarDefaultView: 'month', defaultPlanTime: '09:00' }))).kind, 'server');
+    reply = new TypeError('Failed to fetch');
+    const network = await fails(SettingsService.save({ timezone: null, calendarDefaultView: 'month', defaultPlanTime: '09:00' }));
+    assert.ok(network.kind === 'network' && /Nothing was saved/.test(network.message));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  console.log('settings service: OK (GET/PUT /settings/me, three fields only, blank zone → null, error kinds)');
+}
+
 function rangeChecks(outDir, zone) {
   process.env.TZ = zone;  // Node applies TZ on assignment
   installResolver(outDir);
@@ -429,6 +478,7 @@ if (zoneArg) {
     await planningServiceChecks(outDir);
     cardActionChecks(outDir);
     await rescheduleCancelChecks(outDir);
+    await settingsServiceChecks(outDir);
     for (const zone of ['Europe/London', 'America/New_York', 'Asia/Kolkata', 'UTC']) {
       const child = spawnSync(process.execPath, [SCRIPT, `${ZONE_ARG}${zone}`, `${OUT_ARG}${outDir}`], { encoding: 'utf8' });
       process.stdout.write(child.stdout);
