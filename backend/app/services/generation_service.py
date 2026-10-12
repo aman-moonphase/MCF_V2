@@ -50,6 +50,40 @@ EDITABLE_FIELDS = ("hook", "alternative_hooks", "body", "cta", "hashtags")
 _PROFILE_SKIP = ("source_references", "missing_fields", "confidence")
 MAX_INSTRUCTIONS_CHARS = 1000
 
+SUPPORTED_EDITORIAL_TONES: List[str] = [
+    "professional",
+    "conversational",
+    "educational",
+    "bold",
+]
+
+
+def get_audience_personas(profile: dict, strategy_audience: Optional[str] = None) -> List[str]:
+    """Derive distinct audience personas appropriate to the product profile and strategy audience."""
+    raw_aud = (strategy_audience or profile.get("target_audience") or "").strip()
+    if not raw_aud:
+        return [
+            "Decision-Maker / Team Lead",
+            "Hands-On Practitioner / Daily User",
+            "Budget-Conscious Evaluator",
+        ]
+
+    cleaned_aud = raw_aud.split(" who ")[0].rstrip(".").strip()
+    personas: List[str] = [f"Primary: {cleaned_aud}"]
+
+    # Extract distinct sub-segments if joined by comma, " and ", " or "
+    parts = [p.strip() for p in re.split(r",|\band\b|\bor\b", cleaned_aud) if p.strip()]
+    if len(parts) > 1:
+        for p in parts[:3]:
+            seg = p[0].upper() + p[1:] if len(p) > 1 else p.upper()
+            seg_label = f"Segment: {seg}"
+            if seg_label not in personas and len(seg) > 3:
+                personas.append(seg_label)
+
+    personas.append(f"Decision-Maker ({cleaned_aud})")
+    personas.append(f"Practitioner / End-User ({cleaned_aud})")
+    return personas
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -269,7 +303,9 @@ class GenerationService:
         return {}
 
     async def _build_state(self, project: Project, product: Product, strategy: PromotionStrategy,
-                           pillar_index: int, instructions: str) -> Tuple[dict, dict]:
+                           pillar_index: int, instructions: str,
+                           audience_persona: Optional[str] = None,
+                           editorial_tone: Optional[str] = None) -> Tuple[dict, dict]:
         profile = {k: v for k, v in (product.profile or {}).items() if v and k not in _PROFILE_SKIP}
         plan = strategy.strategy
         pillars = plan.get("content_pillars") or []
@@ -281,6 +317,13 @@ class GenerationService:
         comparison = (product.competitor_comparison
                       if product.competitor_comparison_version == product.competitor_version else None)
         product_name = (profile.get("name") or product.name or "").strip()
+
+        tone = (editorial_tone or "professional").strip().lower()
+        if tone not in SUPPORTED_EDITORIAL_TONES:
+            raise HTTPException(status_code=422,
+                                detail=f"Unsupported editorial tone '{editorial_tone}'. Supported tones: {', '.join(SUPPORTED_EDITORIAL_TONES)}.")
+        available_personas = get_audience_personas(profile, audience.get("primary_audience"))
+        persona = (audience_persona or "").strip() or (available_personas[0] if available_personas else "Primary Target Audience")
 
         query = " ".join(filter(None, [pillar.get("name"), pillar.get("relation_to_product"), profile.get("value_proposition")]))
         sources, full_source, excerpt_meta, retrieval = await self._sources(project, query or product_name)
@@ -306,6 +349,16 @@ class GenerationService:
         context.append(("Approved Promotion Strategy (positioning)", json.dumps(strategy_view, ensure_ascii=False, indent=1)))
         context.append(("Selected content pillar for THIS post", json.dumps(
             {k: pillar.get(k) for k in ("name", "purpose", "relation_to_product")}, ensure_ascii=False, indent=1)))
+
+        tone_descriptions = {
+            "professional": "Professional: Authoritative, polished, and industry-credible with crisp phrasing.",
+            "conversational": "Conversational: Approachable, authentic, peer-to-peer tone as if chatting with a colleague.",
+            "educational": "Educational: Instructive, insightful, breaking down ideas with clarity and actionable takeaways.",
+            "bold": "Bold: High-conviction, punchy, thought-provoking, challenging conventional thinking.",
+        }
+        tone_instruction = tone_descriptions.get(tone, f"{tone.capitalize()}: Adopt a {tone} tone of voice.")
+        context.append(("Target Audience Persona for THIS post", f"Tailor messaging, angle, and hook specifically for: {persona}"))
+        context.append(("Editorial Tone of Voice for THIS post", tone_instruction))
 
         competitor_refs: List[str] = []
         if limited:
@@ -338,12 +391,15 @@ class GenerationService:
             "meta": {
                 **pillar_context(pillar, profile),
                 "product_name": product_name, "pillar": pillar.get("name"),
+                "audience_persona": persona,
+                "editorial_tone": tone,
                 "forbidden_names": await self._forbidden_names(product, product_name),
                 "competitor_names": competitor_names, "competitor_texts": competitor_texts,
             },
             "demo_input": {
                 "profile": profile, "product_name": product_name, "strategy": strategy_view, "pillar": pillar,
                 "emphasis": emphasis, "source_text": full_source, "instructions": instructions,
+                "audience_persona": persona, "editorial_tone": tone,
                 "context_limitations": context_limitations,
             },
         }
@@ -354,6 +410,7 @@ class GenerationService:
             "strategy_id": str(strategy.id), "strategy_version": strategy.version,
             "content_type": MVP_CONTENT_TYPE, "platform": policy.key,
             "pillar_index": pillar_index, "pillar": pillar.get("name"), "instructions": instructions,
+            "audience_persona": persona, "editorial_tone": tone,
             "primary_channel": primary_channel.get("channel"), "emphasis": emphasis.get("text"),
             "evidence": evidence, "source_count": len(sources),
             # Retrieved excerpts cited by this post: where they came from, so Evaluate & Improve can tell when a
@@ -364,7 +421,9 @@ class GenerationService:
 
     # ─── Generate / edit ────────────────────────────────────────────────────
 
-    async def generate(self, project_id: UUID, pillar_index: int = 0, instructions: Optional[str] = None) -> GeneratedContent:
+    async def generate(self, project_id: UUID, pillar_index: int = 0, instructions: Optional[str] = None,
+                       audience_persona: Optional[str] = None,
+                       editorial_tone: Optional[str] = None) -> GeneratedContent:
         project, stages = await self.get_project(project_id)
         if not uses_product_workflow(stages):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -386,7 +445,10 @@ class GenerationService:
         if existing and existing.status == "approved":
             raise HTTPException(status_code=409, detail="This post has been approved. It cannot be regenerated or overwritten.")
 
-        state, snapshot = await self._build_state(project, product, strategy, pillar_index, instructions)
+        state, snapshot = await self._build_state(
+            project, product, strategy, pillar_index, instructions,
+            audience_persona=audience_persona, editorial_tone=editorial_tone,
+        )
         try:
             with collect_usage() as usage_records:  # real-provider requests only; Demo Mode records nothing
                 result = await run_linkedin_generation(state)
@@ -419,9 +481,34 @@ class GenerationService:
                                 detail="This post was just generated by another request. Reload to see the saved post.")
         stage = stages.get(STAGE_KEY)
         if stage:
-            stage.data = {"generated_content_id": str(draft.id), "version": draft.version, "pillar": snapshot["pillar"]}
+            stage.data = {
+                **(stage.data or {}),
+                "generated_content_id": str(draft.id),
+                "version": draft.version,
+                "pillar": snapshot["pillar"],
+                "audience_persona": snapshot["audience_persona"],
+                "editorial_tone": snapshot["editorial_tone"],
+            }
         await self.db.commit()
         return draft
+
+    async def save_preferences(self, project_id: UUID, audience_persona: Optional[str] = None,
+                               editorial_tone: Optional[str] = None) -> Dict[str, Any]:
+        """Persist selected persona and tone on the workflow stage before generation."""
+        project, stages = await self.get_project(project_id)
+        stage = stages.get(STAGE_KEY)
+        if stage:
+            data = dict(stage.data or {})
+            if audience_persona is not None:
+                data["audience_persona"] = audience_persona.strip()
+            if editorial_tone is not None:
+                tone = editorial_tone.strip().lower()
+                if tone in SUPPORTED_EDITORIAL_TONES:
+                    data["editorial_tone"] = tone
+            stage.data = data
+            await self.db.commit()
+        return await self.state(project_id)
+
 
     @staticmethod
     def _report(validation: dict) -> dict:
@@ -568,6 +655,10 @@ class GenerationService:
                     "blocking_problem": "Generate Content is part of the product workflow; this project uses the legacy workflow."}
         ready = await self.readiness(project, stages)
         product, strategy = ready["product"], ready["strategy"]
+        stage = stages.get(STAGE_KEY)
+        stage_data = (stage.data or {}) if stage else {}
+        draft = await self.get_draft(project)
+        draft_snap = (draft.context_snapshot or {}) if draft else {}
         context = None
         if product:
             profile = product.profile or {}
@@ -578,6 +669,9 @@ class GenerationService:
                           if product.competitor_comparison_version == product.competitor_version else None) or {}
             competitor_current = (product.competitor_analysis_status == "approved"
                                   and product.competitor_approved_version == product.competitor_version and bool(comparison))
+            available_personas = get_audience_personas(profile, audience.get("primary_audience"))
+            selected_persona = stage_data.get("audience_persona") or draft_snap.get("audience_persona") or (available_personas[0] if available_personas else None)
+            selected_tone = stage_data.get("editorial_tone") or draft_snap.get("editorial_tone") or "professional"
             context = {
                 "product_id": product.id, "product_name": profile.get("name") or product.name,
                 "target_audience": audience.get("primary_audience") or profile.get("target_audience"),
@@ -587,6 +681,10 @@ class GenerationService:
                 "differentiators": profile.get("differentiators") or [],
                 "messaging_direction": audience.get("messaging_direction"),
                 "pillars": [{"name": p.get("name"), "purpose": p.get("purpose")} for p in plan.get("content_pillars") or []],
+                "available_personas": available_personas,
+                "available_tones": SUPPORTED_EDITORIAL_TONES,
+                "selected_persona": selected_persona,
+                "selected_tone": selected_tone,
                 "primary_channel": next((c.get("channel") for c in channels if c.get("priority") == "primary"), None),
                 "approved_type": ready["approved_type"],
                 "limited_evidence": bool(product.competitor_limited_evidence),
@@ -594,7 +692,7 @@ class GenerationService:
                 "competitor": None if product.competitor_limited_evidence or not competitor_current
                 else competitor_findings(comparison),
             }
-        draft = await self.get_draft(project)
+
         draft_view = None
         stale: List[str] = []
         if draft:

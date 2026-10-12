@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { ProductWorkflowState, WorkflowOrchestrationService } from '@/lib/services/workflow-orchestration.service';
 import { isProductWorkflow } from '@/components/projects/stage-registry';
+import { getDisplayProjectTitle } from '@/lib/project-title';
 
 export default function ProjectWorkspace() {
   const params = useParams();
@@ -197,7 +198,7 @@ export default function ProjectWorkspace() {
           </Link>
           <div className="h-6 w-px bg-border/50" />
           <div>
-            <h1 className="text-lg font-bold tracking-tight text-foreground leading-tight line-clamp-1">{project.title}</h1>
+            <h1 className="text-lg font-bold tracking-tight text-foreground leading-tight line-clamp-1">{getDisplayProjectTitle(project)}</h1>
             <p className="text-xs text-muted-foreground line-clamp-1">{project.description}</p>
           </div>
         </div>
@@ -256,7 +257,7 @@ export default function ProjectWorkspace() {
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground">
-              Are you sure you want to permanently delete <strong>{project.title}</strong>? This will permanently remove the project and all associated data, including generated content and source documents. This action cannot be undone.
+              Are you sure you want to permanently delete <strong>{getDisplayProjectTitle(project)}</strong>? This will permanently remove the project and all associated data, including generated content and source documents. This action cannot be undone.
             </p>
             {deleteError && (
               <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg">

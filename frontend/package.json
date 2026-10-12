@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "check:calendar": "node scripts/check-calendar.mjs",
-    "check:api-client": "node scripts/check-api-client.mjs"
+    "check:api-client": "node scripts/check-api-client.mjs",
+    "check:status-consistency": "node scripts/check-status-consistency.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",

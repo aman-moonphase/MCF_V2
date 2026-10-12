@@ -71,7 +71,8 @@ def build_demo_linkedin_post(prompt: str) -> dict:
     source = (ctx.get("source_text") or "").lower()
 
     name = p.get("name") or ctx.get("product_name") or "Our product"
-    audience = _inline(strategy.get("primary_audience") or p.get("target_audience"))
+    audience = _inline(ctx.get("audience_persona") or strategy.get("primary_audience") or p.get("target_audience"))
+    tone = (ctx.get("editorial_tone") or "professional").strip().lower()
     problem = _clean(p.get("problem_solved"))
     value = _clean(strategy.get("value_proposition") or p.get("value_proposition"))
     description = _clean(p.get("description"))
@@ -90,8 +91,15 @@ def build_demo_linkedin_post(prompt: str) -> dict:
 
     paragraphs: List[str] = []
     if kind == "problem" and problem:
-        hook = (_sentence(f"How much of your week goes to {burden}?") if burden
-                else _sentence(problem if not problem.lower().startswith(name.lower()) else value or problem))
+        if tone == "bold" and burden:
+            hook = _sentence(f"Stop losing your week to {burden}")
+        elif tone == "conversational" and burden:
+            hook = _sentence(f"Ever wonder how much of your week goes to {burden}?")
+        elif tone == "educational" and burden:
+            hook = _sentence(f"Here is why so much of your week goes to {burden}")
+        else:
+            hook = (_sentence(f"How much of your week goes to {burden}?") if burden
+                    else _sentence(problem if not problem.lower().startswith(name.lower()) else value or problem))
         framing = f"For {audience}, that is the problem {name} solves." if audience else f"That is the problem {name} solves."
         # The problem statement itself follows, unless it already is the hook.
         paragraphs.append(framing if hook == _sentence(problem) else f"{framing} {_sentence(problem)}")
@@ -160,6 +168,8 @@ def build_demo_linkedin_post(prompt: str) -> dict:
                        "kind": "competitor_context", "refs": emphasis["competitor_refs"]})
     body = "\n\n".join(x for x in paragraphs if x) or _sentence(f"{name} is our product")
     claims.append({"text": hook, "kind": "creative", "refs": []})
+    if tone != "professional" or ctx.get("audience_persona"):
+        claims.append({"text": f"Delivered in a {tone} editorial tone targeting {audience}.", "kind": "creative", "refs": []})
 
     candidates = [
         _sentence(value) if value else "",
@@ -187,16 +197,29 @@ def build_demo_linkedin_post(prompt: str) -> dict:
     audience_tag = _tag(audience.split(" who ")[0]) if audience else ""
     hashtags = [t for t in dict.fromkeys([_tag(name), _tag(p.get("category") or ""), audience_tag]) if t]
     alignment = f"Serves the pillar \"{pillar.get('name')}\" ({kind} angle)"
+    if tone != "professional":
+        alignment += f" with a {tone} tone"
+    if audience:
+        alignment += f" targeting {audience}"
     if strategy.get("messaging_direction"):
         alignment += f" and follows the messaging direction: {_inline(strategy['messaging_direction'])}"
     if emphasis.get("competitor_refs") and kind in ("differentiator", "general"):
         alignment += f". Emphasises \"{_inline(lead)}\", which supplied competitor evidence does not mention"
 
+    if tone == "conversational":
+        cta = _sentence(f"Curious how {name} works for you? Drop a comment or say hi")
+    elif tone == "educational":
+        cta = _sentence(f"What is your biggest takeaway on this? Share your thoughts below")
+    elif tone == "bold":
+        cta = _sentence(f"Ready to stop settling? See what {name} can do for your workflow")
+    else:
+        cta = _sentence(f"Want to see how {name} would work for you? Comment or send us a message")
+
     return {
         "hook": hook,
         "alternative_hooks": alternatives,
         "body": body,
-        "cta": _sentence(f"Want to see how {name} would work for you? Comment or send us a message"),
+        "cta": cta,
         "hashtags": hashtags,
         "claims": claims,
         "pillar": pillar.get("name") or "",

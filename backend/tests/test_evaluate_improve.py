@@ -345,3 +345,30 @@ async def test_migration_adds_the_stage_only_to_in_progress_product_projects(db_
         assert untouched not in added
     after = {r[0]: r[1] for r in (await db_session.execute(text("SELECT id::text || stage_type, status FROM workflow_stages"))).all()}
     assert {k: v for k, v in after.items() if k in before} == before  # no existing status changed
+
+
+@pytest.mark.asyncio
+async def test_evaluation_reflects_persona_and_tone(authenticated_client):
+    """Evaluate & Improve incorporates audience_persona and editorial_tone in evaluation context."""
+    project_id, _, _ = await ready_project(authenticated_client)
+    gen_res = await authenticated_client.post(
+        f"/api/projects/{project_id}/generated-content",
+        json={
+            "pillar_index": 0,
+            "audience_persona": "Segment: Freelancers",
+            "editorial_tone": "bold",
+        },
+    )
+    assert gen_res.status_code == 200
+
+    eval_res = await authenticated_client.post(
+        f"/api/projects/{project_id}/evaluation",
+        json={"version": 1},
+    )
+    assert eval_res.status_code == 200
+    state = eval_res.json()
+    assert state["status"] == "current"
+    ev = state["evaluation"]
+    aud_dim = next(d for d in ev["result"]["dimensions"] if d["key"] == "audience_positioning")
+    assert "Persona: \"Segment: Freelancers\"." in aud_dim["summary"]
+    assert "Tone: Bold." in aud_dim["summary"]

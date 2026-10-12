@@ -151,21 +151,27 @@ class RuleBasedEvaluator:
                               "claims are not fact-checked."))
 
         # ── Audience & positioning ─────────────────────────────────────────
-        audience = ctx.strategy.get("primary_audience") or ctx.profile.get("target_audience") or ""
+        target_audience = ctx.strategy.get("primary_audience") or ctx.profile.get("target_audience") or ""
+        audience = ctx.audience_persona or target_audience
         value = ctx.strategy.get("value_proposition") or ctx.profile.get("value_proposition") or ""
         if audience and not _covers(audience.split(" who ")[0], post_stems, 0.5):
             found["audience_positioning"].append(_finding(
-                "recommendation", "medium", f"The post does not clearly address the approved audience: \"{_short(audience, 90)}\".",
+                "recommendation", "medium", f"The post does not clearly address the target persona: \"{_short(audience, 90)}\".",
                 f"Speak to {audience.split(' who ')[0].strip().rstrip('.').lower()} directly, ideally in the hook."))
         elif audience and not _covers(audience.split(" who ")[0], stems(opening), 0.5):
             found["audience_positioning"].append(_finding(
-                "recommendation", "low", "The audience is named in the post but not in its opening.",
+                "recommendation", "low", "The target persona is named in the post but not in its opening.",
                 "Mention the audience in the hook or first line so the right readers stop scrolling."))
         if value and not _covers(value, post_stems, 0.5):
             found["audience_positioning"].append(_finding(
                 "recommendation", "medium", f"The approved value proposition is not clearly stated: \"{_short(value, 120)}\".",
                 "Add one line that states this benefit in your own words."))
-        notes["audience_positioning"] = f"Approved audience: \"{_short(audience, 80)}\"." if audience else "No approved audience."
+        aud_note = f"Approved audience: \"{_short(target_audience, 80)}\"." if target_audience else "No approved audience."
+        if ctx.audience_persona:
+            aud_note += f" Persona: \"{_short(ctx.audience_persona, 60)}\"."
+        if ctx.editorial_tone:
+            aud_note += f" Tone: {ctx.editorial_tone.capitalize()}."
+        notes["audience_positioning"] = aud_note
 
         # ── Readability ────────────────────────────────────────────────────
         body = post.get("body", "")

@@ -107,6 +107,8 @@ class EvaluationService:
             validation=validation, evidence=snapshot.get("evidence") or {},
             stale_reasons=self.generation.stale_reasons(draft, ready["product"], ready["strategy"], ready["approved_type"]),
             policy=platform_policy(),
+            audience_persona=snapshot.get("audience_persona"),
+            editorial_tone=snapshot.get("editorial_tone"),
         )
 
     async def _excerpt_status(self, project: Project, snapshot: dict) -> Dict[str, Dict[str, Any]]:

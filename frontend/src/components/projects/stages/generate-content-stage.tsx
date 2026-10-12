@@ -140,16 +140,51 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
   const [error, setError] = useState<string | null>(null);
   const [pillarIndex, setPillarIndex] = useState(0);
   const [instructions, setInstructions] = useState('');
+  const [selectedPersona, setSelectedPersona] = useState<string>('');
+  const [selectedTone, setSelectedTone] = useState<string>('professional');
   const [edits, setEdits] = useState<Edits | null>(null);
 
   const apply = (next: GenerationState) => {
     setState(next);
     setEdits(next.draft ? toEdits(next.draft.content) : null);
     const snap = next.draft?.contextSnapshot;
+    const ctx = next.context;
     if (snap) {
       setPillarIndex(snap.pillarIndex ?? 0);
       setInstructions(snap.instructions ?? '');
+      if (snap.audiencePersona) {
+        setSelectedPersona(snap.audiencePersona);
+      } else if (ctx?.selectedPersona) {
+        setSelectedPersona(ctx.selectedPersona);
+      } else if (ctx?.availablePersonas?.[0]) {
+        setSelectedPersona(ctx.availablePersonas[0]);
+      }
+
+      if (snap.editorialTone) {
+        setSelectedTone(snap.editorialTone);
+      } else if (ctx?.selectedTone) {
+        setSelectedTone(ctx.selectedTone);
+      }
+    } else if (ctx) {
+      if (ctx.selectedPersona) {
+        setSelectedPersona(ctx.selectedPersona);
+      } else if (ctx.availablePersonas?.[0]) {
+        setSelectedPersona(ctx.availablePersonas[0]);
+      }
+      if (ctx.selectedTone) {
+        setSelectedTone(ctx.selectedTone);
+      }
     }
+  };
+
+  const handlePersonaChange = (val: string) => {
+    setSelectedPersona(val);
+    GenerationService.savePreferences(project.id, { audiencePersona: val }).catch(() => {});
+  };
+
+  const handleToneChange = (val: string) => {
+    setSelectedTone(val);
+    GenerationService.savePreferences(project.id, { editorialTone: val }).catch(() => {});
   };
 
   useEffect(() => {
@@ -216,7 +251,12 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
     setBusy('generate');
     setError(null);
     try {
-      apply(await GenerationService.generate(project.id, pillarIndex, instructions));
+      apply(await GenerationService.generate(project.id, {
+        pillarIndex,
+        instructions,
+        audiencePersona: selectedPersona || null,
+        editorialTone: selectedTone || 'professional',
+      }));
       toast.success(draft ? 'New draft generated' : 'LinkedIn post generated');
       if (onRefreshOrchestration) {
         await onRefreshOrchestration();
@@ -274,6 +314,21 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
   const hookLong = (edits?.hook.length ?? 0) > policy.hookMaxChars;
   const evidence = new Map((draft?.evidence ?? []).map((e) => [e.ref, e.description]));
 
+  const toneHelper: Record<string, string> = {
+    professional: 'Authoritative, polished, industry-credible',
+    conversational: 'Approachable, authentic, peer-to-peer',
+    educational: 'Instructive, insightful, actionable takeaways',
+    bold: 'High-conviction, punchy, thought-provoking',
+  };
+
+  const personaList = ctx?.availablePersonas?.length
+    ? ctx.availablePersonas
+    : (selectedPersona ? [selectedPersona] : ['Primary Target Audience']);
+
+  const toneList = ctx?.availableTones?.length
+    ? ctx.availableTones
+    : ['professional', 'conversational', 'educational', 'bold'];
+
   const controls = (
     <Panel title="Generate">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -285,6 +340,34 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
           {ctx?.pillars[pillarIndex] && <p className="text-xs text-muted-foreground">{ctx.pillars[pillarIndex].purpose}</p>}
         </div>
         <div className="space-y-1.5">
+          <p className={label}>Audience persona</p>
+          <select
+            value={selectedPersona}
+            onChange={(e) => handlePersonaChange(e.target.value)}
+            disabled={!!busy || approved}
+            className={field}
+          >
+            {personaList.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">Tailors hook, perspective, and framing to this persona</p>
+        </div>
+        <div className="space-y-1.5">
+          <p className={label}>Editorial tone</p>
+          <select
+            value={selectedTone}
+            onChange={(e) => handleToneChange(e.target.value)}
+            disabled={!!busy || approved}
+            className={field}
+          >
+            {toneList.map((t) => (
+              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">{toneHelper[selectedTone] || 'Editorial voice for the post'}</p>
+        </div>
+        <div className="space-y-1.5">
           <p className={label}>Campaign instructions (optional)</p>
           <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} maxLength={1000} disabled={!!busy || approved}
             placeholder="e.g. Focus on the end-of-quarter tax deadline" className={field} />
@@ -292,7 +375,7 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
       </div>
       {state.provider === 'demo' && (
         <p className="text-xs text-amber-500">
-          Demo mode: the post is assembled deterministically from your approved data. It does not follow free-text instructions.
+          Demo mode: the post is assembled deterministically reflecting your selected persona and editorial tone. It does not follow free-text instructions.
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -319,6 +402,16 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
             )}
             {draft?.isDemo && (
               <span className="px-3 py-1 rounded-full text-xs font-medium border bg-amber-500/10 text-amber-500 border-amber-500/20">Demo output</span>
+            )}
+            {draft?.contextSnapshot?.audiencePersona && (
+              <span className="px-3 py-1 rounded-full text-xs font-medium border bg-primary/10 text-primary border-primary/20">
+                Persona: {draft.contextSnapshot.audiencePersona}
+              </span>
+            )}
+            {draft?.contextSnapshot?.editorialTone && (
+              <span className="px-3 py-1 rounded-full text-xs font-medium border bg-sky-500/10 text-sky-500 border-sky-500/20">
+                Tone: {draft.contextSnapshot.editorialTone.charAt(0).toUpperCase() + draft.contextSnapshot.editorialTone.slice(1)}
+              </span>
             )}
           </div>
           <p className="text-sm text-muted-foreground">
@@ -368,6 +461,8 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
             <Fact name="Messaging direction" value={ctx.messagingDirection} />
             <Fact name="Key features" value={ctx.keyFeatures} />
             <Fact name="Differentiators" value={ctx.differentiators} />
+            {selectedPersona && <Fact name="Target persona" value={selectedPersona} />}
+            {selectedTone && <Fact name="Editorial tone" value={selectedTone.charAt(0).toUpperCase() + selectedTone.slice(1)} />}
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
             <span>Content type: {ctx.approvedType || '—'}</span>

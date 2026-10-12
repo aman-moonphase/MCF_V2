@@ -17,6 +17,13 @@ class ProjectService:
         if not project_in.title.strip():
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Title cannot be empty")
 
+        if project_in.title.startswith("Idea: Project Name") or project_in.title.startswith("Idea: Title") or (project_in.title.startswith("Idea: ") and "Project Name:" in project_in.title):
+            if project_in.description:
+                import re
+                match = re.search(r"^\s*(?:Project\s*Name|Project\s*Title|Title)\s*:\s*([^\r\n]+)", project_in.description, re.MULTILINE | re.IGNORECASE)
+                if match and match.group(1).strip():
+                    project_in.title = match.group(1).strip()
+
         project = await self.repo.create(project_in)
 
         stage_repo = WorkflowStageRepository(self.repo.session)

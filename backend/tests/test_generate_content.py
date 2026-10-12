@@ -354,3 +354,104 @@ async def test_legacy_projects_are_untouched(authenticated_client, db_session, t
 @pytest.mark.asyncio
 async def test_unknown_project_is_404(authenticated_client):
     assert (await authenticated_client.get(gen_url(uuid.uuid4()))).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_persona_and_tone_controls_and_persistence(authenticated_client):
+    """Audience persona and editorial tone:
+    1. Are exposed in context with derived personas and supported tones.
+    2. Preferences can be saved before generation and are reflected in state.
+    3. Generate accepts persona & tone, persists them in snapshot and stage.data.
+    4. Genuinely affect generation prompt and demo post output (hook, CTA, alignment).
+    5. Are reflected after reload/get.
+    """
+    project_id, _, _ = await ready_project(authenticated_client)
+
+    # 1. Inspect state
+    st0 = (await authenticated_client.get(gen_url(project_id))).json()
+    assert "available_personas" in st0["context"]
+    assert len(st0["context"]["available_personas"]) >= 2
+    assert st0["context"]["available_tones"] == ["professional", "conversational", "educational", "bold"]
+    assert st0["context"]["selected_tone"] == "professional"
+
+    # 2. Save preferences before generating
+    pref_res = await authenticated_client.put(
+        f"/api/projects/{project_id}/generated-content/preferences",
+        json={"audience_persona": "Decision-Maker (CA firms)", "editorial_tone": "conversational"},
+    )
+    assert pref_res.status_code == 200
+    st_pref = pref_res.json()
+    assert st_pref["context"]["selected_persona"] == "Decision-Maker (CA firms)"
+    assert st_pref["context"]["selected_tone"] == "conversational"
+
+    # 3. Reload reflects saved preferences
+    st_reload = (await authenticated_client.get(gen_url(project_id))).json()
+    assert st_reload["context"]["selected_persona"] == "Decision-Maker (CA firms)"
+    assert st_reload["context"]["selected_tone"] == "conversational"
+
+    # 4. Generate with selected persona and conversational tone
+    res_conv = await authenticated_client.post(
+        gen_url(project_id),
+        json={
+            "pillar_index": 0,
+            "audience_persona": "Decision-Maker (CA firms)",
+            "editorial_tone": "conversational",
+        },
+    )
+    assert res_conv.status_code == 200
+    data_conv = res_conv.json()
+    snap_conv = data_conv["draft"]["context_snapshot"]
+    assert snap_conv["audience_persona"] == "Decision-Maker (CA firms)"
+    assert snap_conv["editorial_tone"] == "conversational"
+
+    # Conversational CTA and alignment note
+    post_conv = data_conv["draft"]["content"]
+    assert "Curious how" in post_conv["cta"] or "say hi" in post_conv["cta"]
+    assert "conversational tone" in post_conv["strategy_alignment"]
+    assert "Decision-Maker (CA firms)" in post_conv["strategy_alignment"]
+
+    # 5. Generate with bold tone to prove tone genuinely alters output
+    res_bold = await authenticated_client.post(
+        gen_url(project_id),
+        json={
+            "pillar_index": 0,
+            "audience_persona": "Practitioner / End-User",
+            "editorial_tone": "bold",
+        },
+    )
+    assert res_bold.status_code == 200
+    data_bold = res_bold.json()
+    post_bold = data_bold["draft"]["content"]
+    assert "Ready to stop settling?" in post_bold["cta"]
+    assert "bold tone" in post_bold["strategy_alignment"]
+    assert data_bold["draft"]["context_snapshot"]["editorial_tone"] == "bold"
+
+    # 6. Invalid tone is rejected with 422
+    bad_tone = await authenticated_client.post(
+        gen_url(project_id),
+        json={"editorial_tone": "hyperbolic"},
+    )
+    assert bad_tone.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_persona_and_tone_in_prompt_context_for_real_provider(authenticated_client):
+    """When a real provider is called, persona and tone are injected into prompt context."""
+    project_id, _, _ = await ready_project(authenticated_client)
+    recorder = RecordingProvider(GOOD_POST)
+    with patch("app.ai.graphs.generation_graph.get_provider", return_value=recorder):
+        res = await authenticated_client.post(
+            gen_url(project_id),
+            json={
+                "pillar_index": 0,
+                "audience_persona": "Segment: Freelancers",
+                "editorial_tone": "educational",
+            },
+        )
+    assert res.status_code == 200
+    prompt_ctx = recorder.contexts[0]["prompt_context"]
+    ctx_dict = dict(prompt_ctx)
+    assert "Target Audience Persona for THIS post" in ctx_dict
+    assert "Segment: Freelancers" in ctx_dict["Target Audience Persona for THIS post"]
+    assert "Editorial Tone of Voice for THIS post" in ctx_dict
+    assert "Educational:" in ctx_dict["Editorial Tone of Voice for THIS post"]

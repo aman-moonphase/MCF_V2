@@ -61,6 +61,13 @@ class GenerateRequest(BaseModel):
     # Only choices are accepted from the client; all context is loaded server-side.
     pillar_index: int = 0
     instructions: Optional[str] = Field(default=None, max_length=MAX_INSTRUCTIONS_CHARS)
+    audience_persona: Optional[str] = None
+    editorial_tone: Optional[str] = None
+
+
+class PreferencesRequest(BaseModel):
+    audience_persona: Optional[str] = None
+    editorial_tone: Optional[str] = None
 
 
 class ApprovePostRequest(BaseModel):
@@ -86,8 +93,21 @@ async def get_generated_content(project_id: UUID, db: AsyncSession = Depends(get
 async def generate_content(project_id: UUID, body: GenerateRequest, db: AsyncSession = Depends(get_db),
                            user: User = Depends(get_current_user)):
     service = GenerationService(db, user.id)
-    await service.generate(project_id, body.pillar_index, body.instructions)
+    await service.generate(
+        project_id,
+        pillar_index=body.pillar_index,
+        instructions=body.instructions,
+        audience_persona=body.audience_persona,
+        editorial_tone=body.editorial_tone,
+    )
     return await service.state(project_id)
+
+
+@router.put("/{project_id}/generated-content/preferences", response_model=GenerationStateResponse)
+async def save_preferences(project_id: UUID, body: PreferencesRequest, db: AsyncSession = Depends(get_db),
+                           user: User = Depends(get_current_user)):
+    service = GenerationService(db, user.id)
+    return await service.save_preferences(project_id, body.audience_persona, body.editorial_tone)
 
 
 @router.patch("/{project_id}/generated-content", response_model=GenerationStateResponse)

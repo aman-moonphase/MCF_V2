@@ -24,6 +24,7 @@ INSTRUCTIONS = """
 Write ONE LinkedIn post for OUR product, using only the approved context above.
 - Build it from the selected content pillar and the strategy's messaging direction; use the product's real
   features, audience, problem and value proposition. Address the audience directly.
+- Adopt the specified editorial tone of voice (e.g. professional, conversational, educational, or bold) and tailor the delivery to the selected audience persona.
 - Every factual statement about OUR product goes in `claims` as kind "product_fact" and cites S* (sources) or
   P:<field> (approved profile). Messaging that is not a fact is kind "creative".
 - The approved profile (P:<field>) is the confirmed record. Source excerpts (S:...) are unverified text from our

@@ -70,35 +70,91 @@ export function WorkspaceContent({
     }
 
     switch (activeStage.type) {
-      case 'source-grounding':
+      case 'source-grounding': {
+        const isCompleted = activeStage.status === 'Completed';
+        const isInProgress = activeStage.status === 'In Progress';
+        const isNotStarted = activeStage.status === 'Not Started';
+
+        const statusColor = isCompleted
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : isInProgress
+          ? 'text-primary'
+          : 'text-muted-foreground';
+
+        const panelBorder = isCompleted
+          ? 'border-emerald-500/20 bg-emerald-500/5'
+          : isInProgress
+          ? 'border-primary/20 bg-primary/5'
+          : 'border-border/50 bg-card/40';
+
+        const iconColor = isCompleted ? 'text-emerald-500' : 'text-primary';
+
+        const explanationText = isCompleted
+          ? 'Source material has been grounded and approved for this project. Downstream stages can now build on this context.'
+          : isInProgress
+          ? 'Source grounding is in progress. Review the source material below and confirm grounding when ready.'
+          : 'Source material has been ingested and stored for this project. In Demo Mode, live embeddings and automated fact verification are bypassed. Review the ingested material below and approve to advance to Product Understanding.';
+
+        const factVerificationDisplay = activeStage.data?.factVerification?.passed
+          ? 'Verification Passed'
+          : 'Not Executed (Demo Mode)';
+
+        const factVerificationSubtext = activeStage.data?.factVerification?.passed
+          ? 'Verified against available context'
+          : 'Demo Mode bypasses live verification';
+
+        const systemLog = activeStage.data?.extractedContext || [
+          `[SYSTEM] Stage: Source Grounding (${activeStage.status})`,
+          `[SYSTEM] Mode: Demo Mode (No live external AI or embedding calls)`,
+          `[SYSTEM] Source Type: ${project.sourceType || 'Text Idea'}`,
+          `[SYSTEM] Source Ingestion: Document record stored`,
+          `[SYSTEM] Embeddings: Synthetic demo representations (Live embedding provider not invoked)`,
+          `[SYSTEM] Fact Verification: Not executed in Demo Mode`,
+          `[SYSTEM] Status: ${isCompleted ? 'Source grounding approved.' : 'Awaiting review and approval to advance.'}`,
+        ].join('\n');
+
         return (
           <div className="space-y-6">
-            <div className="glass-panel p-6 rounded-2xl border-emerald-500/20 bg-emerald-500/5">
+            <div className={`glass-panel p-6 rounded-2xl ${panelBorder}`}>
               <h3 className="flex items-center gap-2 text-lg font-semibold mb-2 text-foreground">
-                <FileText className="w-5 h-5 text-emerald-500" />
+                <FileText className={`w-5 h-5 ${iconColor}`} />
                 Source Grounding & Research Check
               </h3>
               <p className="text-sm text-muted-foreground mb-4">
-                The source material has been successfully processed, embedded, and fact-verified against available context.
+                {explanationText}
               </p>
               
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                 <div className="bg-white dark:bg-card p-4 rounded-xl border border-border/50 shadow-sm">
-                  <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Status</div>
-                  <div className="font-medium">Fact Verification Complete</div>
+                  <div className={`text-xs font-semibold ${statusColor} uppercase tracking-wider mb-1`}>Stage Status</div>
+                  <div className="font-medium text-foreground">{activeStage.status}</div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
+                    {isCompleted ? 'Grounding approved' : isNotStarted ? 'Pending review & approval' : 'In progress'}
+                  </div>
                 </div>
+
                 <div className="bg-white dark:bg-card p-4 rounded-xl border border-border/50 shadow-sm">
-                  <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Source Size</div>
-                  <div className="font-medium">{project.sourceReference.length > 50 ? 'Extracted text' : project.sourceReference}</div>
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Fact Verification</div>
+                  <div className="font-medium text-foreground">{factVerificationDisplay}</div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">{factVerificationSubtext}</div>
+                </div>
+
+                <div className="bg-white dark:bg-card p-4 rounded-xl border border-border/50 shadow-sm">
+                  <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Source Reference</div>
+                  <div className="font-medium text-foreground truncate" title={project.sourceReference}>
+                    {project.sourceReference.length > 50 ? `${project.sourceReference.substring(0, 47)}...` : project.sourceReference}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">{project.sourceType || 'Text Idea'}</div>
                 </div>
               </div>
 
-              <div className="bg-muted/50 p-4 rounded-xl border border-border/50 text-sm text-muted-foreground leading-relaxed h-[200px] overflow-y-auto font-mono text-xs">
-                {activeStage.data?.extractedContext || `[SYSTEM] Processing Context...\n[SYSTEM] Generating Embeddings...\n[SYSTEM] Fact Verification Passed.\n\nContext extracted and ready for downstream AI pipelines.`}
+              <div className="bg-muted/50 p-4 rounded-xl border border-border/50 text-sm text-muted-foreground leading-relaxed h-[200px] overflow-y-auto font-mono text-xs whitespace-pre-wrap">
+                {systemLog}
               </div>
             </div>
           </div>
         );
+      }
 
       default:
         return (
