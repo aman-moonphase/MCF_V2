@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     POLLINATIONS_MODEL: str = "flux"
     IMAGE_TIMEOUT_SECONDS: float = 60.0
 
+    # UGC Explorer (Reddit Data API)
+    REDDIT_CLIENT_ID: str | None = None
+    REDDIT_CLIENT_SECRET: str | None = None
+    REDDIT_USER_AGENT: str = "MultiContentFactory/1.0 (by /u/MultiContentFactory)"
+    REDDIT_TIMEOUT_SECONDS: float = 10.0
+
     # Email
     SMTP_HOST: str | None = None
     SMTP_PORT: int | None = None

@@ -13,7 +13,8 @@ from app.models.product import Product
 from app.models.user import User
 from app.schemas.competitor import (
     ApproveCompetitorAnalysisRequest, CompetitorAnalysisResponse, CompetitorCreate, CompetitorResponse,
-    CompetitorUpdate, DiscoverResponse, EvidenceResponse,
+    CompetitorUpdate, DiscoverResponse, EvidenceResponse, IngestSignalRequest, IngestUGCRequest,
+    SignalSearchResponse, UGCSearchResponse,
 )
 from app.services.competitor_service import CompetitorService
 
@@ -131,6 +132,66 @@ async def add_evidence(
 @router.delete("/{product_id}/competitors/{competitor_id}/evidence/{evidence_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_evidence(product_id: UUID, competitor_id: UUID, evidence_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     await CompetitorService(db, user.id).delete_evidence(product_id, competitor_id, evidence_id)
+
+
+@router.get("/{product_id}/competitors/{competitor_id}/signals", response_model=SignalSearchResponse)
+async def search_competitor_signals(
+    product_id: UUID,
+    competitor_id: UUID,
+    query: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    service = CompetitorService(db, user.id)
+    result = await service.search_signals_for_competitor(product_id, competitor_id, custom_query=query)
+    return SignalSearchResponse(**result)
+
+
+@router.post("/{product_id}/competitors/{competitor_id}/signals/ingest", response_model=EvidenceResponse, status_code=status.HTTP_201_CREATED)
+async def ingest_competitor_signal(
+    product_id: UUID,
+    competitor_id: UUID,
+    body: IngestSignalRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    service = CompetitorService(db, user.id)
+    e = await service.ingest_signal_evidence(product_id, competitor_id, body.model_dump())
+    return EvidenceResponse(
+        id=e.id, evidence_type=e.evidence_type, source_url=e.source_url, title=e.title, status=e.status, error=e.error,
+        excerpt=(e.content or "")[:300] or None, char_count=len(e.content or ""), created_at=e.created_at,
+    )
+
+
+@router.get("/{product_id}/competitors/{competitor_id}/ugc", response_model=UGCSearchResponse)
+async def search_competitor_ugc(
+    product_id: UUID,
+    competitor_id: UUID,
+    query: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    service = CompetitorService(db, user.id)
+    result = await service.search_ugc_for_competitor(product_id, competitor_id, custom_query=query)
+    return UGCSearchResponse(**result)
+
+
+@router.post("/{product_id}/competitors/{competitor_id}/ugc/ingest", response_model=EvidenceResponse, status_code=status.HTTP_201_CREATED)
+async def ingest_competitor_ugc(
+    product_id: UUID,
+    competitor_id: UUID,
+    body: IngestUGCRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    service = CompetitorService(db, user.id)
+    e = await service.ingest_ugc_evidence(product_id, competitor_id, body.model_dump())
+    return EvidenceResponse(
+        id=e.id, evidence_type=e.evidence_type, source_url=e.source_url, title=e.title, status=e.status, error=e.error,
+        excerpt=(e.content or "")[:300] or None, char_count=len(e.content or ""), created_at=e.created_at,
+    )
+
+
 
 
 @router.post("/{product_id}/competitors/{competitor_id}/analyze", response_model=CompetitorResponse)

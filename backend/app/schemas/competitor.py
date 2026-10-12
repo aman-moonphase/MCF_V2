@@ -75,3 +75,66 @@ class ApproveCompetitorAnalysisRequest(BaseModel):
     version: int
     # Explicitly accept a limited-evidence state (no analyzed competitor / no current comparison).
     limited_evidence: bool = False
+
+
+class SignalArticleItem(BaseModel):
+    title: str
+    source_url: str
+    domain: str
+    published_at: Optional[str] = None
+    retrieved_at: str
+    matching_query: str
+    language: Optional[str] = None
+    source_country: Optional[str] = None
+
+
+class SignalSearchResponse(BaseModel):
+    status: str
+    articles: List[SignalArticleItem] = []
+    evidence_evaluation: Dict[str, str] = {}
+    matching_query: str
+    total_found: int = 0
+    error_message: Optional[str] = None
+    retry_after: Optional[int] = None
+    cached: Optional[bool] = None
+
+
+class IngestSignalRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    source_url: str = Field(min_length=1, max_length=1024)
+    domain: Optional[str] = Field(default=None, max_length=255)
+    published_at: Optional[str] = None
+    matching_query: Optional[str] = None
+    limitations: Optional[str] = None
+
+
+class RedditPostItem(BaseModel):
+    title: str
+    source_url: str
+    subreddit: str
+    published_at: Optional[str] = None
+    retrieved_at: str
+    matching_query: str
+    excerpt: str
+    score: int = 0
+    num_comments: int = 0
+
+
+class UGCSearchResponse(BaseModel):
+    status: str
+    posts: List[RedditPostItem] = []
+    matching_query: str
+    total_found: int = 0
+    error_message: Optional[str] = None
+    limitations: Optional[str] = None
+
+
+class IngestUGCRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    source_url: str = Field(min_length=1, max_length=1024)
+    subreddit: Optional[str] = Field(default=None, max_length=100)
+    published_at: Optional[str] = None
+    matching_query: Optional[str] = None
+    excerpt: Optional[str] = None
+    score: Optional[int] = 0
+    num_comments: Optional[int] = 0

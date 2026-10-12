@@ -56,7 +56,7 @@ export interface Comparison {
 
 export interface Evidence {
   id: string;
-  evidenceType: 'url' | 'note' | 'pdf';
+  evidenceType: 'url' | 'note' | 'pdf' | 'market_signal' | 'ugc';
   sourceUrl?: string | null;
   title?: string | null;
   status: 'completed' | 'failed' | 'not_fetched';
@@ -146,4 +146,85 @@ export const CompetitorService = {
 
   approve: (productId: string, projectId: string, version: number, limitedEvidence = false): Promise<CompetitorAnalysisState> =>
     apiClient.post(`${base(productId)}/competitor-analysis/approve`, { projectId, version, limitedEvidence }),
+
+  searchSignals: (productId: string, competitorId: string, query?: string): Promise<SignalSearchResponse> =>
+    apiClient.get(`${base(productId)}/competitors/${competitorId}/signals${query ? `?query=${encodeURIComponent(query)}` : ''}`),
+
+  ingestSignal: (productId: string, competitorId: string, input: IngestSignalInput): Promise<Evidence> =>
+    apiClient.post(`${base(productId)}/competitors/${competitorId}/signals/ingest`, input),
+
+  searchUgc: (productId: string, competitorId: string, query?: string): Promise<UGCSearchResponse> =>
+    apiClient.get(`${base(productId)}/competitors/${competitorId}/ugc${query ? `?query=${encodeURIComponent(query)}` : ''}`),
+
+  ingestUgc: (productId: string, competitorId: string, input: IngestUGCInput): Promise<Evidence> =>
+    apiClient.post(`${base(productId)}/competitors/${competitorId}/ugc/ingest`, input),
 };
+
+export interface SignalArticleItem {
+  title: string;
+  sourceUrl: string;
+  domain: string;
+  publishedAt?: string | null;
+  retrievedAt: string;
+  matchingQuery: string;
+  language?: string | null;
+  sourceCountry?: string | null;
+}
+
+export interface SignalSearchResponse {
+  status: 'success' | 'empty' | 'error' | 'rate_limited';
+  articles: SignalArticleItem[];
+  evidenceEvaluation: {
+    strength: string;
+    label: string;
+    summary: string;
+    limitations: string;
+  };
+  matchingQuery: string;
+  totalFound: number;
+  errorMessage?: string | null;
+  retryAfter?: number | null;
+  cached?: boolean | null;
+}
+
+
+export interface IngestSignalInput {
+  title: string;
+  sourceUrl: string;
+  domain?: string | null;
+  publishedAt?: string | null;
+  matchingQuery?: string | null;
+  limitations?: string | null;
+}
+
+export interface RedditPostItem {
+  title: string;
+  sourceUrl: string;
+  subreddit: string;
+  publishedAt?: string | null;
+  retrievedAt: string;
+  matchingQuery: string;
+  excerpt: string;
+  score: number;
+  numComments: number;
+}
+
+export interface UGCSearchResponse {
+  status: 'success' | 'empty' | 'unconfigured' | 'error';
+  posts: RedditPostItem[];
+  matchingQuery: string;
+  totalFound: number;
+  errorMessage?: string | null;
+  limitations?: string | null;
+}
+
+export interface IngestUGCInput {
+  title: string;
+  sourceUrl: string;
+  subreddit?: string | null;
+  publishedAt?: string | null;
+  matchingQuery?: string | null;
+  excerpt?: string | null;
+  score?: number;
+  numComments?: number;
+}

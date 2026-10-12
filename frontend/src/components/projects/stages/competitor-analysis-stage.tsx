@@ -6,9 +6,10 @@ import { Project, WorkflowStage } from '@/types/project';
 import { ProductService } from '@/lib/services/product.service';
 import {
   Comparison, Competitor, CompetitorAnalysis, CompetitorAnalysisState, CompetitorInput, CompetitorService, Finding, Reference,
+  RedditPostItem, SignalArticleItem, SignalSearchResponse, UGCSearchResponse,
 } from '@/lib/services/competitor.service';
 import {
-  CheckCircle2, ChevronDown, ChevronUp, Edit3, ExternalLink, FileText, GitCompare, Link2, Loader2, Lock, Plus, Search, Swords, Trash2,
+  AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Edit3, ExternalLink, FileText, GitCompare, Globe, Link2, Loader2, Lock, MessageSquare, Plus, Search, Swords, Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -254,6 +255,320 @@ function EvidenceForm({ onAdd, busy }: { onAdd: (type: 'url' | 'note' | 'pdf', c
   );
 }
 
+function SignalsPanel({
+  productId,
+  competitor,
+  onIngested,
+}: {
+  productId: string;
+  competitor: Competitor;
+  onIngested: () => Promise<void> | void;
+}) {
+  const [query, setQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [data, setData] = useState<SignalSearchResponse | null>(null);
+  const [ingestingUrl, setIngestingUrl] = useState<string | null>(null);
+
+  const search = async () => {
+    setIsLoading(true);
+    try {
+      const res = await CompetitorService.searchSignals(productId, competitor.id, query.trim() || undefined);
+      setData(res);
+      if (res.status === 'rate_limited') {
+        toast.warning(res.errorMessage || 'GDELT is temporarily rate-limiting searches. Please wait before trying again.');
+      } else if (res.status === 'empty') {
+        toast.info('No recent GDELT articles found for this query.');
+      } else if (res.status === 'error') {
+        toast.error(res.errorMessage || 'Failed to search GDELT.');
+      }
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const ingest = async (article: SignalArticleItem) => {
+    setIngestingUrl(article.sourceUrl);
+    try {
+      await CompetitorService.ingestSignal(productId, competitor.id, {
+        title: article.title,
+        sourceUrl: article.sourceUrl,
+        domain: article.domain,
+        publishedAt: article.publishedAt,
+        matchingQuery: data?.matchingQuery,
+        limitations: data?.evidenceEvaluation?.limitations,
+      });
+      toast.success('Signal added to evidence');
+      await onIngested();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setIngestingUrl(null);
+    }
+  };
+
+  return (
+    <div className="bg-muted/30 border border-border/50 rounded-2xl p-4 space-y-3">
+      <div>
+        <h5 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+          <Globe className="w-3.5 h-3.5" /> Key Signals — GDELT DOC 2.0 News Search
+        </h5>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Search recent global media coverage for {competitor.name}. Single mentions are not labeled as trends.
+        </p>
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={`"${competitor.name}" (leave blank for automatic query)`}
+          className={cn(inputClass, 'h-9 py-1 text-xs')}
+        />
+        <button
+          onClick={search}
+          disabled={isLoading}
+          className={cn(pillButton, 'bg-primary text-primary-foreground h-9 text-xs')}
+        >
+          {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />} Search
+        </button>
+      </div>
+
+      {data?.status === 'rate_limited' && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-500 space-y-1">
+          <p className="font-semibold flex items-center gap-1.5">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            GDELT Rate Limit Active
+          </p>
+          <p className="text-foreground/90">
+            {data.errorMessage || 'GDELT is temporarily rate-limiting searches. Please wait before trying again.'}
+          </p>
+          <p className="text-muted-foreground text-[11px] italic">
+            Existing manual evidence workflows (URL, text observations, and PDF upload) remain fully available.
+          </p>
+        </div>
+      )}
+
+      {data && data.status !== 'rate_limited' && (
+        <div className="space-y-3 pt-1">
+          {data.evidenceEvaluation && data.articles.length > 0 && (
+            <div className="p-3 rounded-xl bg-background border border-border/40 text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-foreground">{data.evidenceEvaluation.label}</span>
+                <div className="flex items-center gap-1.5">
+                  {data.cached && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">cached</span>
+                  )}
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-muted font-mono">{data.matchingQuery}</span>
+                </div>
+              </div>
+              <p className="text-foreground/90">{data.evidenceEvaluation.summary}</p>
+              <p className="text-muted-foreground text-[11px] italic">{data.evidenceEvaluation.limitations}</p>
+            </div>
+          )}
+
+          {data.articles.map((art, idx) => {
+            const alreadyAdded = competitor.evidence.some((e) => e.sourceUrl === art.sourceUrl);
+            return (
+              <div key={idx} className="p-3 rounded-xl bg-background border border-border/30 text-xs flex items-start justify-between gap-3">
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-foreground truncate">{art.title}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{art.domain}</span>
+                    {art.publishedAt && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(art.publishedAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                  <a
+                    href={art.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-primary hover:underline flex items-center gap-1 truncate"
+                  >
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{art.sourceUrl}</span>
+                  </a>
+                </div>
+                <button
+                  onClick={() => ingest(art)}
+                  disabled={alreadyAdded || ingestingUrl === art.sourceUrl}
+                  className={cn(
+                    pillButton,
+                    'h-7 px-2.5 text-[11px]',
+                    alreadyAdded ? 'bg-muted text-muted-foreground' : 'bg-foreground text-background'
+                  )}
+                >
+                  {alreadyAdded ? 'Added' : ingestingUrl === art.sourceUrl ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                  {alreadyAdded ? '' : ' Add'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UGCPanel({
+  productId,
+  competitor,
+  onIngested,
+}: {
+  productId: string;
+  competitor: Competitor;
+  onIngested: () => Promise<void> | void;
+}) {
+  const [query, setQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [data, setData] = useState<UGCSearchResponse | null>(null);
+  const [ingestingUrl, setIngestingUrl] = useState<string | null>(null);
+
+  const search = async () => {
+    setIsLoading(true);
+    try {
+      const res = await CompetitorService.searchUgc(productId, competitor.id, query.trim() || undefined);
+      setData(res);
+      if (res.status === 'unconfigured') {
+        toast.warning('Reddit Data API is not configured.');
+      } else if (res.status === 'empty') {
+        toast.info('No Reddit discussions found for this query.');
+      } else if (res.status === 'error') {
+        toast.error(res.errorMessage || 'Failed to search Reddit.');
+      }
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-muted/30 border border-border/50 rounded-2xl p-4 space-y-3">
+      <div>
+        <h5 className="text-xs font-bold uppercase tracking-wider text-orange-500 flex items-center gap-1.5">
+          <MessageSquare className="w-3.5 h-3.5" /> UGC Explorer — Reddit Public Discussions
+        </h5>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Search real user reviews, alternative recommendations, and pain points for {competitor.name}. Anecdotal feedback is treated as hypotheses.
+        </p>
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={`"${competitor.name}" (leave blank for automatic query)`}
+          className={cn(inputClass, 'h-9 py-1 text-xs')}
+        />
+        <button
+          onClick={search}
+          disabled={isLoading}
+          className={cn(pillButton, 'bg-orange-500 hover:bg-orange-600 text-white h-9 text-xs')}
+        >
+          {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />} Search
+        </button>
+      </div>
+
+      {data?.status === 'unconfigured' && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-500 space-y-1">
+          <div className="font-semibold flex items-center gap-1.5">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            Reddit Data API Not Configured
+          </div>
+          <p className="text-foreground/80">
+            {data.errorMessage}
+          </p>
+          <p className="text-muted-foreground text-[11px] italic">
+            Existing manual evidence workflows (URL, text observations, and PDF upload) remain fully available.
+          </p>
+        </div>
+      )}
+
+      {data?.status === 'success' && (
+        <div className="space-y-3 pt-1">
+          {data.limitations && (
+            <p className="text-[11px] text-muted-foreground italic px-1">
+              Note: {data.limitations}
+            </p>
+          )}
+
+          {data.posts.map((post, idx) => {
+            const alreadyAdded = competitor.evidence.some((e) => e.sourceUrl === post.sourceUrl);
+            return (
+              <div key={idx} className="p-3 rounded-xl bg-background border border-border/30 text-xs flex items-start justify-between gap-3">
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-foreground truncate">{post.title}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 font-medium">{post.subreddit}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ▲ {post.score} · {post.numComments} comments
+                    </span>
+                    {post.publishedAt && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(post.publishedAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                  {post.excerpt && (
+                    <p className="text-muted-foreground text-[11px] line-clamp-2">
+                      {post.excerpt}
+                    </p>
+                  )}
+                  <a
+                    href={post.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-primary hover:underline flex items-center gap-1 truncate"
+                  >
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{post.sourceUrl}</span>
+                  </a>
+                </div>
+                <button
+                  onClick={async () => {
+                    setIngestingUrl(post.sourceUrl);
+                    try {
+                      await CompetitorService.ingestUgc(productId, competitor.id, {
+                        title: post.title,
+                        sourceUrl: post.sourceUrl,
+                        subreddit: post.subreddit,
+                        publishedAt: post.publishedAt,
+                        matchingQuery: data.matchingQuery,
+                        excerpt: post.excerpt,
+                        score: post.score,
+                        numComments: post.numComments,
+                      });
+                      toast.success('UGC discussion added to evidence');
+                      await onIngested();
+                    } catch (e) {
+                      toast.error(errorMessage(e));
+                    } finally {
+                      setIngestingUrl(null);
+                    }
+                  }}
+                  disabled={alreadyAdded || ingestingUrl === post.sourceUrl}
+                  className={cn(
+                    pillButton,
+                    'h-7 px-2.5 text-[11px]',
+                    alreadyAdded ? 'bg-muted text-muted-foreground' : 'bg-foreground text-background'
+                  )}
+                >
+                  {alreadyAdded ? 'Added' : ingestingUrl === post.sourceUrl ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                  {alreadyAdded ? '' : ' Add'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CompetitorAnalysisStage({ project, activeStage, onComplete }: Props) {
   const [productId, setProductId] = useState<string | null>(null);
   const [state, setState] = useState<CompetitorAnalysisState | null>(null);
@@ -262,6 +577,8 @@ export function CompetitorAnalysisStage({ project, activeStage, onComplete }: Pr
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [showSignals, setShowSignals] = useState<string | null>(null);
+  const [showUgc, setShowUgc] = useState<string | null>(null);
 
   const reload = useCallback(async (id: string) => setState(await CompetitorService.getState(id)), []);
 
@@ -453,8 +770,10 @@ export function CompetitorAnalysisStage({ project, activeStage, onComplete }: Pr
                       <div key={e.id} className="flex items-start justify-between gap-3 text-sm bg-muted/20 rounded-xl p-3 border border-border/30">
                         <div className="min-w-0">
                           <p className="font-medium text-foreground flex items-center gap-2">
-                            {e.evidenceType === 'url' ? <ExternalLink className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
+                            {e.evidenceType === 'url' ? <ExternalLink className="w-3.5 h-3.5" /> : e.evidenceType === 'market_signal' ? <Globe className="w-3.5 h-3.5 text-primary" /> : e.evidenceType === 'ugc' ? <MessageSquare className="w-3.5 h-3.5 text-orange-500" /> : <FileText className="w-3.5 h-3.5" />}
                             <span className="truncate">{e.title}</span>
+                            {e.evidenceType === 'market_signal' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20">Signal</span>}
+                            {e.evidenceType === 'ugc' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 border border-orange-500/20">UGC</span>}
                             <span className={cn('text-[10px] px-1.5 py-0.5 rounded', e.status === 'completed' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500')}>{e.status.replace('_', ' ')}</span>
                           </p>
                           {e.error ? <p className="text-xs text-amber-500">{e.error}</p> : e.excerpt && <p className="text-xs text-muted-foreground line-clamp-2">{e.excerpt}</p>}
@@ -468,6 +787,49 @@ export function CompetitorAnalysisStage({ project, activeStage, onComplete }: Pr
                       const res = await CompetitorService.addEvidence(pid, c.id, type, content, file);
                       if (res.status !== 'completed' && res.error) toast.warning(res.error);
                     }, 'Evidence added')} />
+
+                    <div className="pt-1 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => {
+                          setShowSignals((s) => (s === c.id ? null : c.id));
+                          if (showUgc === c.id) setShowUgc(null);
+                        }}
+                        className={cn(pillButton, 'h-8 px-3 text-xs bg-muted/60 text-foreground border border-border/40 hover:bg-muted')}
+                      >
+                        <Globe className="w-3.5 h-3.5 text-primary" />
+                        {showSignals === c.id ? 'Close Key Signals' : 'Search Key Signals (GDELT)'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowUgc((s) => (s === c.id ? null : c.id));
+                          if (showSignals === c.id) setShowSignals(null);
+                        }}
+                        className={cn(pillButton, 'h-8 px-3 text-xs bg-muted/60 text-foreground border border-border/40 hover:bg-muted')}
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-orange-500" />
+                        {showUgc === c.id ? 'Close UGC Explorer' : 'Search UGC (Reddit)'}
+                      </button>
+                    </div>
+
+                    {showSignals === c.id && (
+                      <SignalsPanel
+                        productId={pid}
+                        competitor={c}
+                        onIngested={async () => {
+                          await reload(pid);
+                        }}
+                      />
+                    )}
+
+                    {showUgc === c.id && (
+                      <UGCPanel
+                        productId={pid}
+                        competitor={c}
+                        onIngested={async () => {
+                          await reload(pid);
+                        }}
+                      />
+                    )}
                   </div>
 
                   {c.analysisError && <p className="text-sm text-amber-500">{c.analysisError}</p>}

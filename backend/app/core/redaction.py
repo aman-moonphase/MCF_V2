@@ -32,7 +32,7 @@ def _configured_secrets() -> List[str]:
     from .config import settings
 
     values = [getattr(settings, name, None) for name in
-              ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "POLLINATIONS_API_KEY", "SECRET_KEY", "SMTP_PASSWORD", "POSTGRES_PASSWORD")]
+              ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "POLLINATIONS_API_KEY", "REDDIT_CLIENT_SECRET", "SECRET_KEY", "SMTP_PASSWORD", "POSTGRES_PASSWORD")]
     try:
         parts = urlsplit(settings.DATABASE_URL)
         values += [unquote(parts.password) if parts.password else None]

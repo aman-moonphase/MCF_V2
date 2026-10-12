@@ -89,5 +89,60 @@ class AISuggestionIntelligence(CompetitorIntelligenceProvider):
         ]
 
 
+class KeySignalsIntelligence(CompetitorIntelligenceProvider):
+    key = "key_signals"
+    label = "Key Signals (GDELT)"
+
+    def is_available(self) -> bool:
+        from app.core.config import settings
+
+        # Available when real AI/research is active; Demo Mode stays strictly offline
+        return normalize_provider_name(settings.AI_PROVIDER) in ("claude", "openai")
+
+    async def discover_candidates(self, profile: dict, existing_names: List[str]) -> List[CandidateCompetitor]:
+        # Candidate discovery from GDELT relies on explicit signal search; background discovery does not invent candidates.
+        return []
+
+    async def collect_evidence(self, competitor_name: str, website_url: Optional[str] = None) -> List[dict]:
+        from app.services.gdelt_provider import GDELTProvider
+
+        provider = GDELTProvider()
+        res = await provider.search_articles(competitor_name, max_records=5)
+        if res.get("status") == "success":
+            return res.get("articles") or []
+        return []
+
+
+class UGCExplorerIntelligence(CompetitorIntelligenceProvider):
+    key = "ugc_explorer"
+    label = "UGC Explorer (Reddit)"
+
+    def is_available(self) -> bool:
+        from app.core.config import settings
+        from app.services.reddit_provider import RedditUGCProvider
+
+        return (
+            RedditUGCProvider.is_configured()
+            and normalize_provider_name(settings.AI_PROVIDER) in ("claude", "openai")
+        )
+
+    async def discover_candidates(self, profile: dict, existing_names: List[str]) -> List[CandidateCompetitor]:
+        return []
+
+    async def collect_evidence(self, competitor_name: str, website_url: Optional[str] = None) -> List[dict]:
+        from app.services.reddit_provider import RedditUGCProvider
+
+        provider = RedditUGCProvider()
+        res = await provider.search_posts(competitor_name, max_results=5)
+        if res.get("status") == "success":
+            return res.get("posts") or []
+        return []
+
+
 def intelligence_providers() -> List[CompetitorIntelligenceProvider]:
-    return [ProductSourcesIntelligence(), AISuggestionIntelligence()]
+    return [
+        ProductSourcesIntelligence(),
+        AISuggestionIntelligence(),
+        KeySignalsIntelligence(),
+        UGCExplorerIntelligence(),
+    ]
