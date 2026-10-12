@@ -60,6 +60,25 @@ export interface GeneratedDraft {
     limitedEvidence?: boolean;
   } | null;
   evidence: { ref: string; description: string }[];
+  image?: ContentImageAsset | null;
+}
+
+export interface ContentImageAsset {
+  id: string;
+  projectId: string;
+  generatedContentId: string;
+  contentVersion: number;
+  versionMatchesPost: boolean;
+  prompt: string;
+  altText: string;
+  imageUrl: string;
+  aspectRatio: string;
+  style: string;
+  provider: string;
+  isDemo: boolean;
+  status: 'generated' | 'saved';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CompetitorFinding {
@@ -110,6 +129,21 @@ export interface GenerationState {
 
 export type PostEdits = Partial<Pick<LinkedInPost, 'hook' | 'alternativeHooks' | 'body' | 'cta' | 'hashtags'>>;
 
+export interface GenerateImageParams {
+  prompt?: string | null;
+  aspectRatio?: string;
+  style?: string;
+  altText?: string | null;
+  provider?: string | null;
+}
+
+export interface UpdateImageParams {
+  prompt?: string | null;
+  altText?: string | null;
+  style?: string;
+  aspectRatio?: string;
+}
+
 const url = (projectId: string) => `/projects/${projectId}/generated-content`;
 
 // Only choices (pillar, instructions) and the user's own edits are sent; the backend loads all context itself.
@@ -122,4 +156,13 @@ export const GenerationService = {
   // Human approval of the saved version. Records the decision only: nothing is published or scheduled.
   approve: (projectId: string, version: number): Promise<GenerationState> =>
     apiClient.post(`${url(projectId)}/approve`, { version }),
+  // Image generation and creative preview
+  generateImage: (projectId: string, params?: GenerateImageParams): Promise<GenerationState> =>
+    apiClient.post(`${url(projectId)}/image`, params || {}),
+  updateImage: (projectId: string, params: UpdateImageParams): Promise<GenerationState> =>
+    apiClient.patch(`${url(projectId)}/image`, params),
+  deleteImage: async (projectId: string): Promise<GenerationState> => {
+    await apiClient.delete(`${url(projectId)}/image`);
+    return GenerationService.get(projectId);
+  },
 };

@@ -32,9 +32,11 @@ from app.core.config import settings
 from app.core.text_encoding import repair_mojibake
 from app.core.workflow import uses_product_workflow
 from app.models.competitor import Competitor, CompetitorEvidence
+from app.models.content_image import ContentImage
 from app.models.generated_content import GeneratedContent
 from app.models.product import Product
 from app.models.project import Project
+from app.services.image_service import serialize_image
 from app.models.promotion_strategy import PromotionStrategy
 from app.models.workflow_stage import WorkflowStage
 from app.services.retrieval_service import RetrievalService
@@ -597,12 +599,19 @@ class GenerationService:
         stale: List[str] = []
         if draft:
             stale = self.stale_reasons(draft, product, strategy, ready["approved_type"])
+            img_res = await self.db.execute(
+                select(ContentImage)
+                .where(ContentImage.project_id == project.id, ContentImage.generated_content_id == draft.id)
+                .order_by(ContentImage.updated_at.desc().nullslast(), ContentImage.created_at.desc())
+            )
+            current_image = img_res.scalars().first()
             draft_view = {
                 "id": draft.id, "content": draft.content, "validation": draft.validation, "status": draft.status,
                 "version": draft.version, "edited": draft.edited, "provider": draft.provider, "is_demo": draft.is_demo,
                 "generated_at": draft.generated_at, "edited_at": draft.edited_at,
                 "approved_version": draft.approved_version, "approved_at": draft.approved_at,
                 "usage": draft.usage,
+                "image": serialize_image(current_image, draft.version),
                 # Evidence labels (e.g. "P:key_features") are values, not keys, so clients that rewrite keys keep them intact.
                 "context_snapshot": {k: v for k, v in (draft.context_snapshot or {}).items() if k != "evidence"},
                 "evidence": [{"ref": ref, "description": text} for ref, text in ((draft.context_snapshot or {}).get("evidence") or {}).items()],

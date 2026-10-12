@@ -367,6 +367,10 @@ def test_build_demo_profile_name_extraction_unit():
         ("Features:\n- Lesson booking links", None),
         ("In 2024, our team started building software.", None),
         ("We need marketing content for our scheduling software.", None),
+        (
+            "Project Name: Creative Asset Test\n\nProject Description:\nStudyNest is a study-planning tool designed for college students.",
+            "StudyNest",
+        ),
     ]
 
     for src, expected_name in cases:

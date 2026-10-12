@@ -48,6 +48,8 @@ _URL = re.compile(r"(https?://[^\s,)]+|www\.[^\s,)]+)", re.I)
 def _field_for(label: str) -> Optional[str]:
     label = label.strip().lower()
     for field, keywords in _LABEL_MAP:
+        if field == "name" and label in ("project name", "project title", "project", "campaign name", "campaign"):
+            continue
         if any(k in label for k in keywords):
             return field
     return None
@@ -112,11 +114,9 @@ def _labelled(source: str) -> Dict[str, str]:
         match = _LABEL_PATTERN.match(sentence)
         if not match:
             continue
-        label, body = match.group(1).strip().lower(), match.group(2).strip()
-        for field, keywords in _LABEL_MAP:
-            if any(k in label for k in keywords) and field not in found:
-                found[field] = body
-                break
+        field = _field_for(match.group(1))
+        if field and field not in found:
+            found[field] = match.group(2).strip()
     return found
 
 
@@ -150,22 +150,21 @@ def _is_valid_name(cand: str) -> bool:
     return True
 
 
-def _opening(source: str) -> tuple[Optional[str], str, str]:
-    """(name, description, descriptor) from the first sentence."""
-    sentences = _sentences(source)
-    if not sentences:
-        return None, "", ""
-    first = sentences[0]
-    label = _LABEL_PATTERN.match(first)
-    if label and label.group(1).strip().lower() in ("product", "name", "brand", "product name"):
-        first = label.group(2).strip()
+def _opening_sentence(sentence: str) -> tuple[Optional[str], str, str]:
+    label = _LABEL_PATTERN.match(sentence)
+    if label:
+        lbl_head = label.group(1).strip().lower()
+        if lbl_head in ("project name", "project title", "project", "campaign name", "campaign"):
+            return None, "", ""
+        if lbl_head in ("product", "name", "brand", "product name"):
+            sentence = label.group(2).strip()
 
     # 1. Preamble with for/about/introducing/launching/called/named + Candidate + separator/comma/is + rest
     # e.g. "Create a test project for FocusFlow, a lightweight scheduling tool for independent music tutors"
     m = re.search(
         r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})"
         r"(?:,\s*|\s*[-—–:]\s+|\s+is\s+)((?:an?|the)\s+.+)$",
-        first,
+        sentence,
         re.I,
     )
     if m and _is_valid_name(m.group(1)):
@@ -175,22 +174,22 @@ def _opening(source: str) -> tuple[Optional[str], str, str]:
     # 2. Appositive at start: "FocusFlow, a lightweight scheduling tool for independent music tutors"
     m = re.match(
         r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}),\s+((?:an?|the)\s+.+)$",
-        first,
+        sentence,
     )
     if m and _is_valid_name(m.group(1)):
         cand, rest = _clean_name(m.group(1)), m.group(2).strip()
         return cand, f"{cand} is {rest}.", rest
 
     # 3. Direct "StudioDesk is a booking app for …" — a capitalised name of 1-4 words, then "is a/an/the".
-    m = re.match(r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}) is ((?:an?|the) .+)$", first)
+    m = re.match(r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}) is ((?:an?|the) .+)$", sentence)
     if m and _is_valid_name(m.group(1)):
         cand = _clean_name(m.group(1))
-        return cand, f"{first}.", m.group(2).strip()
+        return cand, f"{sentence}.", m.group(2).strip()
 
     # 4. Separator in (" - ", " — ", " – ", ": ")
     for separator in (" - ", " — ", " – ", ": "):
-        if separator in first:
-            head, rest = first.split(separator, 1)
+        if separator in sentence:
+            head, rest = sentence.split(separator, 1)
             head, rest = head.strip(), rest.strip()
             pre_m = re.search(
                 r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})$",
@@ -207,14 +206,26 @@ def _opening(source: str) -> tuple[Optional[str], str, str]:
     # 5. Preamble ending with product name only (e.g. "Create a test project for FocusFlow.")
     m = re.search(
         r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})\.?$",
-        first,
+        sentence,
         re.I,
     )
     if m and _is_valid_name(m.group(1)):
         cand = _clean_name(m.group(1))
-        return cand, f"{first}.", first
+        return cand, f"{sentence}.", sentence
 
-    return None, f"{first}.", first
+    return None, f"{sentence}.", sentence
+
+
+def _opening(source: str) -> tuple[Optional[str], str, str]:
+    """(name, description, descriptor) from the first sentence or opening sentences."""
+    sentences = _sentences(source)
+    if not sentences:
+        return None, "", ""
+    for s in sentences[:5]:
+        cand, desc, descriptor = _opening_sentence(s)
+        if cand:
+            return cand, desc, descriptor
+    return _opening_sentence(sentences[0])
 
 
 def _descriptor(description: str, name: Optional[str]) -> str:

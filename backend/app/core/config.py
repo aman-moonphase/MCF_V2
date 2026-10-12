@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     # URL ingestion safety (SSRF protection). Keep False outside local experiments.
     ALLOW_PRIVATE_URL_INGESTION: bool = False
 
+    # Creative Image Generation (app/ai/providers/image_provider.py)
+    # Supported providers: "demo" (default, no external calls), "pollinations".
+    IMAGE_PROVIDER: str = "demo"
+    POLLINATIONS_API_KEY: str | None = None
+    POLLINATIONS_MODEL: str = "flux"
+    IMAGE_TIMEOUT_SECONDS: float = 60.0
+
     # Email
     SMTP_HOST: str | None = None
     SMTP_PORT: int | None = None

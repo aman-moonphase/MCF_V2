@@ -7,6 +7,7 @@ import { CompetitorFindings, GenerationService, GenerationState, LinkedInPost, P
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, Circle, Loader2, Lock, PenLine, RefreshCw, Save, Sparkles, Undo2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UsageSummary } from '../usage-summary';
+import { CreativeImagePreview } from '../creative-image-preview';
 
 interface Props {
   project: Project;
@@ -432,8 +433,14 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
             </div>
           </Panel>
 
-          <Panel title="Preview">
-            <div className="rounded-2xl border border-border/50 bg-background p-5 text-sm whitespace-pre-wrap leading-relaxed">{text}</div>
+          <Panel title="Creative Preview">
+            <CreativeImagePreview
+              projectId={project.id}
+              draft={draft}
+              approved={approved}
+              productName={ctx?.productName}
+              onStateChange={(next) => setState(next)}
+            />
           </Panel>
 
           <Panel title="Claims & evidence">
