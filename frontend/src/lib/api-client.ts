@@ -13,35 +13,40 @@ function toSnakeCase(str: string): string {
 }
 
 // Helper to recursively convert object keys from snake_case to camelCase
-function convertKeysToCamelCase(obj: any): any {
+export function convertKeysToCamelCase(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
   if (Array.isArray(obj)) {
     return obj.map(v => convertKeysToCamelCase(v));
-  } else if (obj !== null && obj.constructor === Object) {
-    return Object.keys(obj).reduce(
-      (result, key) => {
-        result[toCamelCase(key)] = convertKeysToCamelCase(obj[key]);
-        return result;
-      },
-      {} as any
-    );
   }
-  return obj;
+  return Object.keys(obj).reduce(
+    (result, key) => {
+      result[toCamelCase(key)] = convertKeysToCamelCase(obj[key]);
+      return result;
+    },
+    {} as any
+  );
 }
 
 // Helper to recursively convert object keys from camelCase to snake_case
-function convertKeysToSnakeCase(obj: any): any {
+export function convertKeysToSnakeCase(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
   if (Array.isArray(obj)) {
     return obj.map(v => convertKeysToSnakeCase(v));
-  } else if (obj !== null && obj.constructor === Object) {
-    return Object.keys(obj).reduce(
-      (result, key) => {
-        result[toSnakeCase(key)] = convertKeysToSnakeCase(obj[key]);
-        return result;
-      },
-      {} as any
-    );
   }
-  return obj;
+  return Object.keys(obj).reduce(
+    (result, key) => {
+      const val = obj[key];
+      if (val !== undefined) {
+        result[toSnakeCase(key)] = convertKeysToSnakeCase(val);
+      }
+      return result;
+    },
+    {} as any
+  );
 }
 
 const getAuthHeaders = (): Record<string, string> => {

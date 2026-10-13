@@ -22,6 +22,8 @@ export interface StageComponentProps {
   onComplete: () => Promise<void> | void;
   /** Switch the workspace to another stage (e.g. back to Generate Content). */
   onSelectStage?: (stageId: string) => void;
+  /** Request refresh of parent workflow orchestration status after changes/approvals. */
+  onRefreshOrchestration?: () => Promise<void> | void;
 }
 
 // Stage type → the interactive component that renders it. A stage with a component here owns its
