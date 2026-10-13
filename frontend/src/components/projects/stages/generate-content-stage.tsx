@@ -7,11 +7,14 @@ import { CompetitorFindings, GenerationService, GenerationState, LinkedInPost, P
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, Circle, Loader2, Lock, PenLine, RefreshCw, Save, Sparkles, Undo2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UsageSummary } from '../usage-summary';
+import { CreativeImagePreview } from '../creative-image-preview';
 
 interface Props {
   project: Project;
   activeStage: WorkflowStage;
   onComplete: () => Promise<void> | void;
+  onSelectStage?: (stageId: string) => void;
+  onRefreshOrchestration?: () => Promise<void> | void;
 }
 
 interface Edits {
@@ -130,23 +133,58 @@ function CompetitorInsights({ findings }: { findings: CompetitorFindings }) {
   );
 }
 
-export function GenerateContentStage({ project, activeStage, onComplete }: Props) {
+export function GenerateContentStage({ project, activeStage, onComplete, onRefreshOrchestration }: Props) {
   const [state, setState] = useState<GenerationState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState<'generate' | 'save' | 'continue' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pillarIndex, setPillarIndex] = useState(0);
   const [instructions, setInstructions] = useState('');
+  const [selectedPersona, setSelectedPersona] = useState<string>('');
+  const [selectedTone, setSelectedTone] = useState<string>('professional');
   const [edits, setEdits] = useState<Edits | null>(null);
 
   const apply = (next: GenerationState) => {
     setState(next);
     setEdits(next.draft ? toEdits(next.draft.content) : null);
     const snap = next.draft?.contextSnapshot;
+    const ctx = next.context;
     if (snap) {
       setPillarIndex(snap.pillarIndex ?? 0);
       setInstructions(snap.instructions ?? '');
+      if (snap.audiencePersona) {
+        setSelectedPersona(snap.audiencePersona);
+      } else if (ctx?.selectedPersona) {
+        setSelectedPersona(ctx.selectedPersona);
+      } else if (ctx?.availablePersonas?.[0]) {
+        setSelectedPersona(ctx.availablePersonas[0]);
+      }
+
+      if (snap.editorialTone) {
+        setSelectedTone(snap.editorialTone);
+      } else if (ctx?.selectedTone) {
+        setSelectedTone(ctx.selectedTone);
+      }
+    } else if (ctx) {
+      if (ctx.selectedPersona) {
+        setSelectedPersona(ctx.selectedPersona);
+      } else if (ctx.availablePersonas?.[0]) {
+        setSelectedPersona(ctx.availablePersonas[0]);
+      }
+      if (ctx.selectedTone) {
+        setSelectedTone(ctx.selectedTone);
+      }
     }
+  };
+
+  const handlePersonaChange = (val: string) => {
+    setSelectedPersona(val);
+    GenerationService.savePreferences(project.id, { audiencePersona: val }).catch(() => {});
+  };
+
+  const handleToneChange = (val: string) => {
+    setSelectedTone(val);
+    GenerationService.savePreferences(project.id, { editorialTone: val }).catch(() => {});
   };
 
   useEffect(() => {
@@ -213,8 +251,16 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
     setBusy('generate');
     setError(null);
     try {
-      apply(await GenerationService.generate(project.id, pillarIndex, instructions));
+      apply(await GenerationService.generate(project.id, {
+        pillarIndex,
+        instructions,
+        audiencePersona: selectedPersona || null,
+        editorialTone: selectedTone || 'professional',
+      }));
       toast.success(draft ? 'New draft generated' : 'LinkedIn post generated');
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } catch (e) {
       setError(errorMessage(e));
       toast.error(errorMessage(e));
@@ -232,6 +278,9 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
         hook: edits.hook, alternativeHooks: edits.alternativeHooks, body: edits.body, cta: edits.cta, hashtags: parseTags(edits.hashtags),
       }, draft.version));
       toast.success('Post saved');
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } catch (e) {
       setError(errorMessage(e));
       toast.error(errorMessage(e));
@@ -244,6 +293,9 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
     setBusy('continue');
     try {
       await onComplete();
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } finally {
       setBusy(null);
     }
@@ -262,6 +314,21 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
   const hookLong = (edits?.hook.length ?? 0) > policy.hookMaxChars;
   const evidence = new Map((draft?.evidence ?? []).map((e) => [e.ref, e.description]));
 
+  const toneHelper: Record<string, string> = {
+    professional: 'Authoritative, polished, industry-credible',
+    conversational: 'Approachable, authentic, peer-to-peer',
+    educational: 'Instructive, insightful, actionable takeaways',
+    bold: 'High-conviction, punchy, thought-provoking',
+  };
+
+  const personaList = ctx?.availablePersonas?.length
+    ? ctx.availablePersonas
+    : (selectedPersona ? [selectedPersona] : ['Primary Target Audience']);
+
+  const toneList = ctx?.availableTones?.length
+    ? ctx.availableTones
+    : ['professional', 'conversational', 'educational', 'bold'];
+
   const controls = (
     <Panel title="Generate">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -273,6 +340,34 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
           {ctx?.pillars[pillarIndex] && <p className="text-xs text-muted-foreground">{ctx.pillars[pillarIndex].purpose}</p>}
         </div>
         <div className="space-y-1.5">
+          <p className={label}>Audience persona</p>
+          <select
+            value={selectedPersona}
+            onChange={(e) => handlePersonaChange(e.target.value)}
+            disabled={!!busy || approved}
+            className={field}
+          >
+            {personaList.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">Tailors hook, perspective, and framing to this persona</p>
+        </div>
+        <div className="space-y-1.5">
+          <p className={label}>Editorial tone</p>
+          <select
+            value={selectedTone}
+            onChange={(e) => handleToneChange(e.target.value)}
+            disabled={!!busy || approved}
+            className={field}
+          >
+            {toneList.map((t) => (
+              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">{toneHelper[selectedTone] || 'Editorial voice for the post'}</p>
+        </div>
+        <div className="space-y-1.5">
           <p className={label}>Campaign instructions (optional)</p>
           <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} maxLength={1000} disabled={!!busy || approved}
             placeholder="e.g. Focus on the end-of-quarter tax deadline" className={field} />
@@ -280,7 +375,7 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
       </div>
       {state.provider === 'demo' && (
         <p className="text-xs text-amber-500">
-          Demo mode: the post is assembled deterministically from your approved data. It does not follow free-text instructions.
+          Demo mode: the post is assembled deterministically reflecting your selected persona and editorial tone. It does not follow free-text instructions.
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -307,6 +402,16 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
             )}
             {draft?.isDemo && (
               <span className="px-3 py-1 rounded-full text-xs font-medium border bg-amber-500/10 text-amber-500 border-amber-500/20">Demo output</span>
+            )}
+            {draft?.contextSnapshot?.audiencePersona && (
+              <span className="px-3 py-1 rounded-full text-xs font-medium border bg-primary/10 text-primary border-primary/20">
+                Persona: {draft.contextSnapshot.audiencePersona}
+              </span>
+            )}
+            {draft?.contextSnapshot?.editorialTone && (
+              <span className="px-3 py-1 rounded-full text-xs font-medium border bg-sky-500/10 text-sky-500 border-sky-500/20">
+                Tone: {draft.contextSnapshot.editorialTone.charAt(0).toUpperCase() + draft.contextSnapshot.editorialTone.slice(1)}
+              </span>
             )}
           </div>
           <p className="text-sm text-muted-foreground">
@@ -356,6 +461,8 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
             <Fact name="Messaging direction" value={ctx.messagingDirection} />
             <Fact name="Key features" value={ctx.keyFeatures} />
             <Fact name="Differentiators" value={ctx.differentiators} />
+            {selectedPersona && <Fact name="Target persona" value={selectedPersona} />}
+            {selectedTone && <Fact name="Editorial tone" value={selectedTone.charAt(0).toUpperCase() + selectedTone.slice(1)} />}
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
             <span>Content type: {ctx.approvedType || '—'}</span>
@@ -421,8 +528,14 @@ export function GenerateContentStage({ project, activeStage, onComplete }: Props
             </div>
           </Panel>
 
-          <Panel title="Preview">
-            <div className="rounded-2xl border border-border/50 bg-background p-5 text-sm whitespace-pre-wrap leading-relaxed">{text}</div>
+          <Panel title="Creative Preview">
+            <CreativeImagePreview
+              projectId={project.id}
+              draft={draft}
+              approved={approved}
+              productName={ctx?.productName}
+              onStateChange={(next) => setState(next)}
+            />
           </Panel>
 
           <Panel title="Claims & evidence">

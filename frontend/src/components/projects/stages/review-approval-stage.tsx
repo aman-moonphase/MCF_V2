@@ -8,6 +8,7 @@ import { GenerationService, GenerationState, PostClaim } from '@/lib/services/ge
 import { AlertTriangle, ArrowLeft, CalendarPlus, CheckCircle2, Loader2, Lock, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UsageSummary } from '../usage-summary';
+import { CreativeImagePreview } from '../creative-image-preview';
 import { EvaluationService, EvaluationState } from '@/lib/services/evaluation.service';
 import { PlanningApiError, ScheduleService } from '@/lib/services/schedule.service';
 import { PlanPostDialog } from '@/components/calendar/plan-post-dialog';
@@ -22,6 +23,7 @@ interface Props {
   activeStage: WorkflowStage;
   onComplete: () => Promise<void> | void;
   onSelectStage?: (stageId: string) => void;
+  onRefreshOrchestration?: () => Promise<void> | void;
 }
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -49,7 +51,7 @@ const assemble = (hook: string, body: string, cta: string, hashtags: string[]) =
 
 /** Review Approval (product workflow): a human reviews the SAVED post and explicitly approves that version.
  *  Approval only records the decision — nothing is published, scheduled or sent to any platform. */
-export function ReviewApprovalStage({ project, activeStage, onComplete, onSelectStage }: Props) {
+export function ReviewApprovalStage({ project, activeStage, onComplete, onSelectStage, onRefreshOrchestration }: Props) {
   const [state, setState] = useState<GenerationState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -150,7 +152,12 @@ export function ReviewApprovalStage({ project, activeStage, onComplete, onSelect
       const next = await GenerationService.approve(project.id, draft.version);
       setState(next);
       toast.success(`Post approved (version ${draft.version}). Nothing has been published.`);
-      if (activeStage.status !== 'Completed') await onComplete();
+      if (activeStage.status !== 'Completed') {
+        await onComplete();
+      }
+      if (onRefreshOrchestration) {
+        await onRefreshOrchestration();
+      }
     } catch (e) {
       setError(errorMessage(e));
       toast.error(errorMessage(e));
@@ -305,8 +312,14 @@ export function ReviewApprovalStage({ project, activeStage, onComplete, onSelect
         </div>
       </Panel>
 
-      <Panel title="Final post preview">
-        <div className="rounded-2xl border border-border/50 bg-background p-5 text-sm whitespace-pre-wrap leading-relaxed">{text}</div>
+      <Panel title="Final post preview &amp; creative asset">
+        <CreativeImagePreview
+          projectId={project.id}
+          draft={draft}
+          approved={approved}
+          readOnly={true}
+          productName={state.context?.productName}
+        />
       </Panel>
 
       <Panel title="Claims & evidence">

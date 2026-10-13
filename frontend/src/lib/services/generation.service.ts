@@ -56,10 +56,31 @@ export interface GeneratedDraft {
     pillar?: string;
     pillarIndex?: number;
     instructions?: string;
+    audiencePersona?: string;
+    editorialTone?: string;
     emphasis?: string | null;
     limitedEvidence?: boolean;
   } | null;
   evidence: { ref: string; description: string }[];
+  image?: ContentImageAsset | null;
+}
+
+export interface ContentImageAsset {
+  id: string;
+  projectId: string;
+  generatedContentId: string;
+  contentVersion: number;
+  versionMatchesPost: boolean;
+  prompt: string;
+  altText: string;
+  imageUrl: string;
+  aspectRatio: string;
+  style: string;
+  provider: string;
+  isDemo: boolean;
+  status: 'generated' | 'saved';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CompetitorFinding {
@@ -87,6 +108,10 @@ export interface GenerationContext {
   differentiators: string[];
   messagingDirection?: string | null;
   pillars: { name: string; purpose: string }[];
+  availablePersonas?: string[];
+  availableTones?: string[];
+  selectedPersona?: string | null;
+  selectedTone?: string | null;
   primaryChannel?: string | null;
   approvedType?: string | null;
   limitedEvidence: boolean;
@@ -110,16 +135,73 @@ export interface GenerationState {
 
 export type PostEdits = Partial<Pick<LinkedInPost, 'hook' | 'alternativeHooks' | 'body' | 'cta' | 'hashtags'>>;
 
+export interface GenerateParams {
+  pillarIndex: number;
+  instructions?: string;
+  audiencePersona?: string | null;
+  editorialTone?: string | null;
+}
+
+export interface GenerateImageParams {
+  prompt?: string | null;
+  aspectRatio?: string;
+  style?: string;
+  altText?: string | null;
+  provider?: string | null;
+}
+
+export interface UpdateImageParams {
+  prompt?: string | null;
+  altText?: string | null;
+  style?: string;
+  aspectRatio?: string;
+}
+
 const url = (projectId: string) => `/projects/${projectId}/generated-content`;
 
-// Only choices (pillar, instructions) and the user's own edits are sent; the backend loads all context itself.
+// Only choices (pillar, instructions, persona, tone) and the user's own edits are sent; the backend loads all context itself.
 export const GenerationService = {
   get: (projectId: string): Promise<GenerationState> => apiClient.get(url(projectId)),
-  generate: (projectId: string, pillarIndex: number, instructions: string): Promise<GenerationState> =>
-    apiClient.post(url(projectId), { pillarIndex, instructions: instructions.trim() || null }),
+  generate: (
+    projectId: string,
+    pillarIndexOrParams: number | GenerateParams,
+    instructions?: string,
+    audiencePersona?: string | null,
+    editorialTone?: string | null
+  ): Promise<GenerationState> => {
+    if (typeof pillarIndexOrParams === 'object') {
+      const { pillarIndex, instructions: inst, audiencePersona: ap, editorialTone: et } = pillarIndexOrParams;
+      return apiClient.post(url(projectId), {
+        pillarIndex,
+        instructions: (inst || '').trim() || null,
+        audiencePersona: ap || null,
+        editorialTone: et || null,
+      });
+    }
+    return apiClient.post(url(projectId), {
+      pillarIndex: pillarIndexOrParams,
+      instructions: (instructions || '').trim() || null,
+      audiencePersona: audiencePersona || null,
+      editorialTone: editorialTone || null,
+    });
+  },
+  savePreferences: (
+    projectId: string,
+    preferences: { audiencePersona?: string | null; editorialTone?: string | null }
+  ): Promise<GenerationState> =>
+    apiClient.put(`${url(projectId)}/preferences`, preferences),
   update: (projectId: string, edits: PostEdits, version: number): Promise<GenerationState> =>
     apiClient.patch(url(projectId), { ...edits, version }),
   // Human approval of the saved version. Records the decision only: nothing is published or scheduled.
   approve: (projectId: string, version: number): Promise<GenerationState> =>
     apiClient.post(`${url(projectId)}/approve`, { version }),
+  // Image generation and creative preview
+  generateImage: (projectId: string, params?: GenerateImageParams): Promise<GenerationState> =>
+    apiClient.post(`${url(projectId)}/image`, params || {}),
+  updateImage: (projectId: string, params: UpdateImageParams): Promise<GenerationState> =>
+    apiClient.patch(`${url(projectId)}/image`, params),
+  deleteImage: async (projectId: string): Promise<GenerationState> => {
+    await apiClient.delete(`${url(projectId)}/image`);
+    return GenerationService.get(projectId);
+  },
 };

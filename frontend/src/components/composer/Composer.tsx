@@ -100,6 +100,11 @@ export function Composer() {
       } else if (isFile && selectedFile) {
         title = 'Document: ' + selectedFile.name;
         sourceType = 'File';
+      } else {
+        const projectNameMatch = text.match(/^\s*(?:Project\s*Name|Project\s*Title|Title)\s*:\s*([^\r\n]+)/im);
+        if (projectNameMatch && projectNameMatch[1].trim()) {
+          title = projectNameMatch[1].trim();
+        }
       }
 
       // 1. Create the project

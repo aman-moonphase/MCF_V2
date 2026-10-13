@@ -1,10 +1,10 @@
 "use client"
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ProjectService } from '@/lib/project-service';
 import { toast } from 'sonner';
-import { Project, ProjectStatus } from '@/types/project';
+import { Project, ProjectStatus, WorkflowStage } from '@/types/project';
 import { WorkflowSidebar } from '@/components/projects/workflow-sidebar';
 import { WorkspaceContent } from '@/components/projects/workspace-content';
 import { ArrowLeft, CheckCircle2, Clock, PlayCircle, Trash2, Loader2 } from 'lucide-react';
@@ -15,6 +15,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ProductWorkflowState, WorkflowOrchestrationService } from '@/lib/services/workflow-orchestration.service';
+import { isProductWorkflow } from '@/components/projects/stage-registry';
+import { getDisplayProjectTitle } from '@/lib/project-title';
 
 export default function ProjectWorkspace() {
   const params = useParams();
@@ -27,36 +30,90 @@ export default function ProjectWorkspace() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [orchestrationState, setOrchestrationState] = useState<ProductWorkflowState | null>(null);
+  const [isOrchestrationLoading, setIsOrchestrationLoading] = useState(false);
+  const [orchestrationError, setOrchestrationError] = useState<string | null>(null);
+
+  const fetchProject = useCallback(async () => {
+    if (id) {
+      const p = await ProjectService.getProject(id);
+      if (p) {
+        setProject(p);
+        // Default to the current active stage, or the first stage if none
+        const current = p.stages.find((s: WorkflowStage) => s.type === p.currentStage) || p.stages[0];
+        if (current) setActiveStageId(current.id);
+
+        if (isProductWorkflow(p)) {
+          setIsOrchestrationLoading(true);
+          setOrchestrationError(null);
+          try {
+            const orch = await WorkflowOrchestrationService.getStatus(id);
+            setOrchestrationState(orch);
+          } catch (e: unknown) {
+            console.warn("Failed to load orchestration status:", e);
+            const msg = e instanceof Error ? e.message : 'Unable to load orchestration status.';
+            setOrchestrationError(msg);
+          } finally {
+            setIsOrchestrationLoading(false);
+          }
+        }
+      }
+      setIsLoading(false);
+    }
+  }, [id]);
+
+  const refreshOrchestration = useCallback(async () => {
+    if (!id) return;
+    try {
+      const orch = await WorkflowOrchestrationService.getStatus(id);
+      setOrchestrationState(orch);
+      setOrchestrationError(null);
+    } catch (e: unknown) {
+      console.warn("Failed to refresh orchestration status:", e);
+      const msg = e instanceof Error ? e.message : 'Unable to load orchestration status.';
+      setOrchestrationError(msg);
+    }
+  }, [id]);
+
+  const handleRetryOrchestration = async () => {
+    if (!id || !project || !isProductWorkflow(project)) return;
+    setIsOrchestrationLoading(true);
+    setOrchestrationError(null);
+    try {
+      const orch = await WorkflowOrchestrationService.getStatus(id);
+      setOrchestrationState(orch);
+      toast.success('Orchestration status refreshed');
+    } catch (e: unknown) {
+      console.warn("Retry failed to load orchestration status:", e);
+      const msg = e instanceof Error ? e.message : 'Unable to load orchestration status.';
+      setOrchestrationError(msg);
+      toast.error(`Retry failed: ${msg}`);
+    } finally {
+      setIsOrchestrationLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchProject = async () => {
-      if (id) {
-        const p = await ProjectService.getProject(id);
-        if (p) {
-          setProject(p);
-          // Default to the current active stage, or the first stage if none
-          const current = p.stages.find((s: any) => s.type === p.currentStage) || p.stages[0];
-          if (current) setActiveStageId(current.id);
-        }
-        setIsLoading(false);
-      }
-    };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchProject();
-  }, [id]);
+  }, [fetchProject]);
 
   const handleStageSelect = (stageId: string) => {
     setActiveStageId(stageId);
+    if (project && isProductWorkflow(project)) {
+      refreshOrchestration();
+    }
   };
 
   const handleAdvanceStage = async () => {
     if (!project || !activeStageId) return;
 
-    const currentIndex = project.stages.findIndex((s: any) => s.id === activeStageId);
+    const currentIndex = project.stages.findIndex((s: WorkflowStage) => s.id === activeStageId);
     const nextStage = project.stages[currentIndex + 1];
 
     if (nextStage) {
       // Run updates concurrently to eliminate sequential network lag
-      const [_, newlyUpdated] = await Promise.all([
+      const [, newlyUpdated] = await Promise.all([
         ProjectService.updateWorkflowStage(project.id, activeStageId, { status: 'Completed' }),
         ProjectService.updateWorkflowStage(project.id, nextStage.id, { status: 'In Progress' })
       ]);
@@ -64,6 +121,7 @@ export default function ProjectWorkspace() {
       if (newlyUpdated) {
         setProject(newlyUpdated);
         setActiveStageId(nextStage.id);
+        await refreshOrchestration();
       }
     } else {
       // The stage update can be refused (e.g. Review Approval without an approved post): then the project
@@ -72,6 +130,7 @@ export default function ProjectWorkspace() {
       if (!completed) return;
       const finalProject = await ProjectService.updateProjectStatus(project.id, 'Completed');
       setProject(finalProject);
+      await refreshOrchestration();
     }
   };
 
@@ -88,7 +147,7 @@ export default function ProjectWorkspace() {
         setDeleteError('Failed to delete project. Please try again.');
         setIsDeleting(false);
       }
-    } catch (e) {
+    } catch {
       setDeleteError('An unexpected error occurred.');
       setIsDeleting(false);
     }
@@ -139,7 +198,7 @@ export default function ProjectWorkspace() {
           </Link>
           <div className="h-6 w-px bg-border/50" />
           <div>
-            <h1 className="text-lg font-bold tracking-tight text-foreground leading-tight line-clamp-1">{project.title}</h1>
+            <h1 className="text-lg font-bold tracking-tight text-foreground leading-tight line-clamp-1">{getDisplayProjectTitle(project)}</h1>
             <p className="text-xs text-muted-foreground line-clamp-1">{project.description}</p>
           </div>
         </div>
@@ -170,6 +229,7 @@ export default function ProjectWorkspace() {
           project={project} 
           onStageSelect={handleStageSelect} 
           activeStageId={activeStageId} 
+          orchestrationState={orchestrationState}
         />
         
         <WorkspaceContent 
@@ -177,6 +237,16 @@ export default function ProjectWorkspace() {
           activeStage={activeStage}
           onAdvanceStage={handleAdvanceStage}
           onSelectStage={handleStageSelect}
+          orchestrationState={orchestrationState}
+          isOrchestrationLoading={isOrchestrationLoading}
+          orchestrationError={orchestrationError}
+          onOrchestrationRetry={handleRetryOrchestration}
+          onOrchestrationUpdate={(newState) => {
+            setOrchestrationState(newState);
+            setOrchestrationError(null);
+          }}
+          onProjectRefresh={fetchProject}
+          onOrchestrationRefresh={refreshOrchestration}
         />
       </div>
 
@@ -187,7 +257,7 @@ export default function ProjectWorkspace() {
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground">
-              Are you sure you want to permanently delete <strong>{project.title}</strong>? This will permanently remove the project and all associated data, including generated content and source documents. This action cannot be undone.
+              Are you sure you want to permanently delete <strong>{getDisplayProjectTitle(project)}</strong>? This will permanently remove the project and all associated data, including generated content and source documents. This action cannot be undone.
             </p>
             {deleteError && (
               <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg">

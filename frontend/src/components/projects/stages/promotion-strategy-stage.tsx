@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Project, WorkflowStage } from '@/types/project';
 import { ProductService } from '@/lib/services/product.service';
 import { Grounding, PromotionStrategy, StrategyService, StrategyState } from '@/lib/services/strategy.service';
-import { AlertTriangle, CheckCircle2, Compass, Edit3, Loader2, Lock, RefreshCw, Save } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Compass, Edit3, Loader2, Lock, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -85,6 +85,7 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState<'generate' | 'save' | 'approve' | null>(null);
   const [draft, setDraft] = useState<PromotionStrategy | null>(null);
+  const [pendingRemoveIndex, setPendingRemoveIndex] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +163,19 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
   const set = (path: Path) => (value: unknown) => setDraft((d) => (d ? setIn(d, path, value) : d));
   const approved = state.status === 'approved';
 
+  const removeChannel = (index: number) => {
+    if (!draft) return;
+    if (draft.channels.length <= 1) {
+      toast.error('At least one channel must remain in the strategy.');
+      return;
+    }
+    const channelName = draft.channels[index]?.channel;
+    const nextChannels = draft.channels.filter((_, idx) => idx !== index);
+    setDraft({ ...draft, channels: nextChannels });
+    setPendingRemoveIndex(null);
+    toast.success(`Removed ${channelName || 'channel'} from draft priorities`);
+  };
+
   const save = async () => {
     if (!draft || !state.strategy) return;
     const original = state.strategy as unknown as Record<string, unknown>;
@@ -171,9 +185,12 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
     const changed = Object.fromEntries(Object.keys(edited)
       .filter((k) => k !== 'limitations' && JSON.stringify(edited[k]) !== JSON.stringify(original[k]))
       .map((k) => [k, clean(edited[k])]));
-    if (!Object.keys(changed).length) { setDraft(null); return; }
+    if (!Object.keys(changed).length) { setDraft(null); setPendingRemoveIndex(null); return; }
     const next = await act('save', () => StrategyService.update(pid, changed as Partial<PromotionStrategy>), 'Strategy saved — approve it again to continue');
-    if (next) setDraft(null);
+    if (next) {
+      setDraft(null);
+      setPendingRemoveIndex(null);
+    }
   };
 
   const approve = async () => {
@@ -206,7 +223,7 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
               <button onClick={save} disabled={!!busy} className={cn(pill, 'bg-primary text-primary-foreground')}>
                 {busy === 'save' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}Save Strategy
               </button>
-              <button onClick={() => setDraft(null)} className={cn(pill, 'bg-muted text-foreground')}>Cancel</button>
+              <button onClick={() => { setDraft(null); setPendingRemoveIndex(null); }} className={cn(pill, 'bg-muted text-foreground')}>Cancel</button>
             </>
           ) : (
             <>
@@ -271,15 +288,67 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
       <Section title="Channel priorities">
         <div className="space-y-3">
           {s.channels.map((c, i) => (
-            <div key={i} className="rounded-2xl border border-border/50 p-4 space-y-2">
+            <div key={i} className="rounded-2xl border border-border/50 p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-semibold text-foreground">
-                  {c.channel}
-                  <span className={cn('ml-2 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border',
-                    c.priority === 'primary' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted text-muted-foreground border-border/50')}>{c.priority}</span>
-                </p>
-                {!editing && <GroundingBadge g={c.grounding} />}
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-foreground">
+                    {c.channel}
+                    <span className={cn('ml-2 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border',
+                      c.priority === 'primary' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted text-muted-foreground border-border/50')}>{c.priority}</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!editing && <GroundingBadge g={c.grounding} />}
+                  {editing && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (s.channels.length <= 1) {
+                          toast.error('At least one channel must remain in the strategy.');
+                          return;
+                        }
+                        setPendingRemoveIndex(pendingRemoveIndex === i ? null : i);
+                      }}
+                      disabled={s.channels.length <= 1}
+                      title={s.channels.length <= 1 ? 'At least one channel must remain active' : `Remove ${c.channel}`}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer',
+                        pendingRemoveIndex === i
+                          ? 'bg-muted text-foreground border-border'
+                          : 'text-destructive border-destructive/20 hover:bg-destructive/10 disabled:opacity-40 disabled:cursor-not-allowed'
+                      )}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Remove</span>
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {editing && pendingRemoveIndex === i && (
+                <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-destructive animate-in fade-in duration-200">
+                  <span>
+                    Remove <strong>{c.channel}</strong> from active channel priorities?
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => removeChannel(i)}
+                      className="px-3 py-1 rounded-lg bg-destructive text-destructive-foreground font-semibold hover:bg-destructive/90 transition-colors cursor-pointer"
+                    >
+                      Confirm Remove
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingRemoveIndex(null)}
+                      className="px-3 py-1 rounded-lg bg-muted text-foreground font-medium hover:bg-muted/80 transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <Text value={c.rationale} editing={editing} onChange={set(['channels', i, 'rationale'])} />
               {c.formats.length > 0 && !editing && <p className="text-xs text-muted-foreground">Formats: {c.formats.join(', ')}</p>}
             </div>
