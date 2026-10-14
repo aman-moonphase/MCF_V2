@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, Optional
 from uuid import UUID, uuid4
 import os
+from urllib.parse import urlparse
 import re
 
 from ...db.session import get_db
@@ -25,6 +27,13 @@ def safe_display_name(filename: Optional[str]) -> str:
     name = os.path.basename((filename or "").replace("\\", "/"))
     name = re.sub(r"[^\w.\- ()]", "_", name).strip(" .")
     return (name or "upload.pdf")[:200]
+
+
+def url_display_name(url: str) -> str:
+    """A readable source label for a web page: its host and path (e.g. "plausible.io/about"), not "Ingested url"."""
+    parts = urlparse(url)
+    label = f"{parts.netloc}{parts.path}".rstrip("/")
+    return (label or parts.netloc or "Web page")[:200]
 
 
 def temp_upload_path(upload_dir: str = TEMP_UPLOAD_DIR) -> str:
@@ -70,6 +79,7 @@ async def ingest_source(
             raise HTTPException(status_code=400, detail="URL content is required")
         try:
             url = validate_public_url(content, allow_private=settings.ALLOW_PRIVATE_URL_INGESTION)
+            display_name = url_display_name(url)
         except UnsafeURLError as e:
             raise HTTPException(status_code=400, detail=str(e))
     elif source_type == "text":
@@ -79,6 +89,7 @@ async def ingest_source(
             raise HTTPException(status_code=422, detail=f"The source is too large to index ({len(content):,} characters; "
                                                         f"the limit is {settings.RAG_MAX_SOURCE_CHARS:,}). Split it into smaller sources.")
         text = content
+        display_name = "Pasted text"
     elif source_type == "pdf":
         if not file:
             raise HTTPException(status_code=400, detail="PDF file is required")
@@ -185,3 +196,107 @@ async def reindex_source(
     meta = source.metadata_ or {}
     return {"id": str(source.id), "status": "Reindexed", "chunks_created": meta.get("chunk_count", 0),
             "embedding_provider": meta.get("embedding_provider"), "embedding_model": meta.get("embedding_model")}
+
+
+@router.get("/{project_id}/sources", response_model=Dict[str, Any])
+async def list_project_sources(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user)
+):
+    """
+    Retrieve all ingested source documents and project reference for a project.
+    Verifies project ownership.
+    """
+    try:
+        project_uuid = UUID(project_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid project_id format")
+
+    project_service = ProjectService(db, current_user.id)
+    project = await project_service.get_project(project_uuid)
+
+    result = await db.execute(
+        select(SourceDocument)
+        .where(SourceDocument.project_id == project_uuid)
+        .order_by(SourceDocument.created_at.asc())
+    )
+    docs = result.scalars().all()
+
+    sources_data = []
+    for d in docs:
+        meta = d.metadata_ or {}
+        sources_data.append({
+            "id": str(d.id),
+            "project_id": str(d.project_id),
+            "name": d.name,
+            "source_type": d.source_type,
+            "source_url": d.source_url,
+            "status": d.status,
+            "extracted_text": d.extracted_text,
+            "char_count": meta.get("char_count") or (len(d.extracted_text) if d.extracted_text else 0),
+            "chunk_count": meta.get("chunk_count", 0),
+            "content_hash": meta.get("content_hash"),
+            "embedding_provider": meta.get("embedding_provider"),
+            "embedding_model": meta.get("embedding_model"),
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+            "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+            "metadata": meta,
+        })
+
+    return {
+        "project_id": str(project.id),
+        "project_title": project.title,
+        "project_source_type": project.source_type,
+        "project_source_reference": project.source_reference,
+        "project_description": project.description,
+        "sources": sources_data,
+    }
+
+
+@router.get("/{project_id}/sources/{source_id}", response_model=Dict[str, Any])
+async def get_source_document(
+    project_id: str,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user)
+):
+    """
+    Retrieve details of a single ingested source document.
+    Verifies project ownership.
+    """
+    try:
+        project_uuid = UUID(project_id)
+        source_uuid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid UUID format")
+
+    project_service = ProjectService(db, current_user.id)
+    await project_service.get_project(project_uuid)
+
+    result = await db.execute(
+        select(SourceDocument)
+        .where(SourceDocument.id == source_uuid, SourceDocument.project_id == project_uuid)
+    )
+    d = result.scalar_one_or_none()
+    if not d:
+        raise HTTPException(status_code=404, detail="Source document not found")
+
+    meta = d.metadata_ or {}
+    return {
+        "id": str(d.id),
+        "project_id": str(d.project_id),
+        "name": d.name,
+        "source_type": d.source_type,
+        "source_url": d.source_url,
+        "status": d.status,
+        "extracted_text": d.extracted_text,
+        "char_count": meta.get("char_count") or (len(d.extracted_text) if d.extracted_text else 0),
+        "chunk_count": meta.get("chunk_count", 0),
+        "content_hash": meta.get("content_hash"),
+        "embedding_provider": meta.get("embedding_provider"),
+        "embedding_model": meta.get("embedding_model"),
+        "created_at": d.created_at.isoformat() if d.created_at else None,
+        "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+        "metadata": meta,
+    }

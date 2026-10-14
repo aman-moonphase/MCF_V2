@@ -121,5 +121,13 @@ export const ProjectService = {
       console.error(`Failed to ingest source for project ${projectId}`, e);
       throw e;
     }
+  },
+
+  getProjectSources: async (projectId: string): Promise<any> => {
+    return await apiClient.get(`/projects/${projectId}/sources`);
+  },
+
+  getSourceDetail: async (projectId: string, sourceId: string): Promise<any> => {
+    return await apiClient.get(`/projects/${projectId}/sources/${sourceId}`);
   }
 };
