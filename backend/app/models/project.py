@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, DateTime, Enum, Text, ForeignKey, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
@@ -15,6 +15,8 @@ class Project(Base):
     source_type = Column(String(100), nullable=False)
     source_reference = Column(String(500), nullable=False)
     current_stage = Column(String(100), nullable=False, default="source-grounding")
+    # Trace of the most recent workflow run (when, outcome, stages visited, redacted errors). See WorkflowOrchestrationService.
+    last_workflow_run = Column(JSONB, nullable=True)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
