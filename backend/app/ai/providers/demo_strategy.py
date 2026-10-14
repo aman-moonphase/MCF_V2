@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 from ..content_types import PROFILES
 from ..generation_context import get_generation_context
+from ..persona_normalization import AUDIENCE_CAVEAT_LIMITATION, has_research_caveat, normalize_persona
 
 _CADENCE = {
     "Social Post": "2-3 posts per week",
@@ -81,7 +82,9 @@ def build_demo_strategy(prompt: str) -> dict:
     limited = bool(ctx.get("limited"))
 
     name = p.get("name") or "the product"
-    audience = p.get("target_audience") or "the target audience described in the profile"
+    raw_audience = p.get("target_audience") or "the target audience described in the profile"
+    audience = normalize_persona(raw_audience) or raw_audience
+    has_caveat = has_research_caveat(raw_audience)
     features = p.get("key_features") or []
     diffs = p.get("differentiators") or []
     problem = p.get("problem_solved")
@@ -122,7 +125,11 @@ def build_demo_strategy(prompt: str) -> dict:
                         "relation_to_product": problem, "grounding": _g("product_profile", _profile_refs(p, "problem_solved"))})
         objectives.append("Introduce the product and the problem")
     if p.get("value_proposition"):
-        pillars.append({"name": "The time it gives back", "purpose": f"Show the benefit: {p['value_proposition']}",
+        # Only claim a TIME benefit when the approved value proposition is about time; otherwise name it neutrally.
+        benefit_name = ("The time it gives back"
+                        if re.search(r"\b(?:time|faster|quick\w*|minutes?|hours?|speed\w*|save[sd]?|effortless\w*)\b", p["value_proposition"], re.I)
+                        else "The benefit it delivers")
+        pillars.append({"name": benefit_name, "purpose": f"Show the benefit: {p['value_proposition']}",
                         "relation_to_product": f"The approved value proposition: {p['value_proposition']}",
                         "grounding": _g("product_profile", _profile_refs(p, "value_proposition"))})
         objectives.append("Show the core benefit")
@@ -184,6 +191,8 @@ def build_demo_strategy(prompt: str) -> dict:
     limitations = []
     if limited:
         limitations.append("Competitor evidence was limited, so channel and differentiation choices rely on the Product Profile.")
+    if has_caveat:
+        limitations.append(AUDIENCE_CAVEAT_LIMITATION)
     limitations += comparison.get("evidence_needed") or []
     missing = [f for f in ("value_proposition", "problem_solved", "target_audience") if not p.get(f)]
     if missing:
@@ -210,7 +219,7 @@ def build_demo_strategy(prompt: str) -> dict:
                 + (f"Differentiate with what supplied competitor evidence does not mention: {differences[0]['statement']}"
                    if differences and not limited else f"Differentiate with: {lead}")),
             "grounding": _g("evidence_inferred", [r for f in differences for r in f["refs"]] or all_refs) if differences and not limited
-            else _g("product_profile", _profile_refs(p, "target_audience", "value_proposition")),
+            else _g("product_profile" if p.get("target_audience") else "hypothesis", _profile_refs(p, "target_audience", "value_proposition"), "medium" if has_caveat else "high" if p.get("target_audience") else "low"),
         },
         "content_pillars": pillars,
         "channels": channels,

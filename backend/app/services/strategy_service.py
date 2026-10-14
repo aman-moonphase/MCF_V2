@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.competitor_schemas import FINDING_SECTIONS, SECTION_LABELS
 from app.ai.config import normalize_provider_name
 from app.ai.graphs.strategy_graph import run_promotion_strategy
+from app.ai.persona_normalization import normalize_persona
 from app.ai.platform_policy import MVP_CONTENT_TYPE, MVP_STRATEGY_NOTE, apply_mvp_content_type
 from app.ai.strategy_schemas import EDITABLE_SECTIONS, PromotionStrategyOutput
 from app.core.config import settings
@@ -175,12 +176,41 @@ class StrategyService:
         merged = {**strategy.strategy, **changes}
         if "channels" in changes and len(changes["channels"]) == 0:
             raise HTTPException(status_code=422, detail="At least one channel must remain in the strategy.")
+
+        # Normalize primary_audience if audience section was updated
+        if "audience" in merged and isinstance(merged["audience"], dict) and merged["audience"].get("primary_audience"):
+            raw_aud = merged["audience"]["primary_audience"]
+            merged["audience"]["primary_audience"] = normalize_persona(raw_aud) or raw_aud
+            # Keep roadmap items' audience in sync if roadmap was not explicitly supplied in changes
+            if "roadmap" not in changes and "roadmap" in merged and isinstance(merged["roadmap"], list):
+                for r in merged["roadmap"]:
+                    if isinstance(r, dict):
+                        r["audience"] = merged["audience"]["primary_audience"]
+
         try:
             validated = PromotionStrategyOutput.model_validate(merged).model_dump()
         except ValidationError as e:
             raise HTTPException(status_code=422, detail=e.errors(include_url=False, include_context=False))
+
         cd = validated["content_direction"]
         cd["alternatives"] = [a for a in dict.fromkeys(cd["alternatives"]) if a != cd["primary_content_type"]][:2]
+
+        # If primary content type changed, align roadmap items' formats to prevent format conflicts
+        if "content_direction" in changes and validated.get("roadmap"):
+            for item in validated["roadmap"]:
+                item["format"] = cd["primary_content_type"]
+
+        # Ensure at least one channel has primary priority
+        if validated.get("channels"):
+            if not any(c.get("priority") == "primary" for c in validated["channels"]):
+                validated["channels"][0]["priority"] = "primary"
+            valid_channel_names = {c["channel"] for c in validated["channels"]}
+            primary_name = next(c["channel"] for c in validated["channels"] if c.get("priority") == "primary")
+            if validated.get("roadmap"):
+                for item in validated["roadmap"]:
+                    if item.get("channel") not in valid_channel_names:
+                        item["channel"] = primary_name
+
         strategy.strategy = validated
         strategy.edited_sections = sorted(set(strategy.edited_sections or []) | set(changes))
         strategy.version = (strategy.version or 0) + 1

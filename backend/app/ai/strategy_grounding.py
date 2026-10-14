@@ -15,6 +15,7 @@ from typing import List
 
 from .competitor_grounding import has_unsupported_numbers
 from .content_types import format_conflicts
+from .persona_normalization import AUDIENCE_CAVEAT_LIMITATION, has_research_caveat, normalize_persona
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 _COMPETITOR_BASES = ("competitor_observed", "evidence_inferred")
@@ -63,11 +64,20 @@ def ground_strategy(output: dict, allowed_refs: List[str], corpus: str, limited:
     s["executive_summary"] = es
 
     au = dict(s["audience"])
-    for key in ("primary_audience", "value_proposition", "messaging_direction"):
+    raw_primary_aud = au.get("primary_audience", "")
+    has_caveat = has_research_caveat(raw_primary_aud) or any(
+        "intended initial test audience" in l or "not a validated customer-research" in l
+        for l in (s.get("limitations") or [])
+    )
+    cleaned_primary_aud = normalize_persona(raw_primary_aud) or raw_primary_aud
+    au["primary_audience"] = _clean_text(cleaned_primary_aud, corpus, removed)
+    for key in ("value_proposition", "messaging_direction"):
         au[key] = _clean_text(au.get(key, ""), corpus, removed)
     for key in ("problems_and_needs", "differentiators"):
         au[key] = _clean_list(au.get(key) or [], corpus, removed)
     au["grounding"] = _ground(au["grounding"], allowed, limited)
+    if has_caveat and au["grounding"]["confidence"] == "high":
+        au["grounding"]["confidence"] = "medium"
     s["audience"] = au
 
     def clean_items(items, text_keys, list_keys=()):
@@ -106,8 +116,13 @@ def ground_strategy(output: dict, allowed_refs: List[str], corpus: str, limited:
     roadmap, adjusted = [], 0
     for item in sorted(s.get("roadmap") or [], key=lambda i: i.get("sequence", 0)):
         item = dict(item)
-        for k in ("objective", "topic", "audience", "success_evaluation"):
+        for k in ("objective", "topic", "success_evaluation"):
             item[k] = _clean_text(item.get(k, ""), corpus, removed)
+        raw_item_aud = item.get("audience") or au["primary_audience"]
+        if has_research_caveat(raw_item_aud):
+            has_caveat = True
+        clean_item_aud = normalize_persona(raw_item_aud) or raw_item_aud
+        item["audience"] = _clean_text(clean_item_aud, corpus, removed)
         if not item.get("format") or format_conflicts(primary, item["format"]):
             item["format"] = primary
             adjusted += 1
@@ -122,6 +137,8 @@ def ground_strategy(output: dict, allowed_refs: List[str], corpus: str, limited:
     if limited:
         limitations.insert(0, "Competitor Analysis was approved with limited evidence. Competitor-based recommendations "
                               "are treated as hypotheses and confidence is capped.")
+    if has_caveat and AUDIENCE_CAVEAT_LIMITATION not in limitations:
+        limitations.append(AUDIENCE_CAVEAT_LIMITATION)
     if adjusted:
         limitations.append(f"Roadmap formats were aligned to the single MVP content type ({primary}).")
     if removed:
