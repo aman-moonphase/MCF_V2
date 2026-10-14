@@ -30,7 +30,7 @@ export function WorkflowSidebar({ project, onStageSelect, activeStageId, orchest
     <div className="w-full lg:w-[280px] xl:w-[320px] shrink-0 border-r border-border/50 bg-background/50 backdrop-blur-xl h-full flex flex-col">
       <div className="p-6 border-b border-border/50">
         <div className="flex items-center justify-between mb-1">
-          <h2 className="text-sm font-semibold tracking-widest text-muted-foreground uppercase">Agentic Pipeline</h2>
+          <h2 className="text-sm font-semibold tracking-widest text-muted-foreground uppercase">Your Workflow</h2>
           {orchestrationState?.status === 'paused_at_approval_boundary' && !orchestrationState.reviewApproved && (
             <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" title="Paused at Review Boundary" />
           )}

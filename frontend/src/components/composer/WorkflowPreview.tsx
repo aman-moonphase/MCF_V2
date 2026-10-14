@@ -32,7 +32,7 @@ export function WorkflowPreview() {
       className="flex flex-col w-full"
     >
       <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 dark:text-muted-foreground mb-8 text-center sm:text-left">
-        Agentic Pipeline
+        Your Workflow
       </h3>
       
       <div className="relative w-full overflow-x-auto pb-6 hide-scrollbar">

@@ -115,7 +115,7 @@ async def ground_sources_node(state: ProductWorkflowState) -> Dict[str, Any]:
     delegate = state.get("grounding_delegate")
     if delegate:
         res = await delegate(state) if callable(delegate) else {}
-        return {**res, "current_stage": stage, "stage_history": history, "execution_log": logs}
+        return {"current_stage": stage, **res, "stage_history": history, "execution_log": logs}
 
     # Default state handling
     sources_grounded = bool(state.get("sources_grounded", True))
@@ -141,7 +141,7 @@ async def product_understanding_node(state: ProductWorkflowState) -> Dict[str, A
     delegate = state.get("understanding_delegate")
     if delegate:
         res = await delegate(state) if callable(delegate) else {}
-        return {**res, "current_stage": stage, "stage_history": history}
+        return {"current_stage": stage, **res, "stage_history": history}
 
     profile = state.get("product_profile")
     version = state.get("profile_version") or (1 if profile else 0)
@@ -188,7 +188,7 @@ async def competitor_analysis_node(state: ProductWorkflowState) -> Dict[str, Any
     delegate = state.get("competitor_delegate")
     if delegate:
         res = await delegate(state) if callable(delegate) else {}
-        return {**res, "current_stage": stage, "stage_history": history}
+        return {"current_stage": stage, **res, "stage_history": history}
 
     comparison = state.get("competitor_comparison")
     version = state.get("competitor_version") or (1 if comparison else 0)
@@ -237,7 +237,7 @@ async def promotion_strategy_node(state: ProductWorkflowState) -> Dict[str, Any]
     delegate = state.get("strategy_delegate")
     if delegate:
         res = await delegate(state) if callable(delegate) else {}
-        return {**res, "current_stage": stage, "stage_history": history}
+        return {"current_stage": stage, **res, "stage_history": history}
 
     strategy = state.get("promotion_strategy")
     version = state.get("strategy_version") or (1 if strategy else 0)
@@ -287,7 +287,7 @@ async def generate_content_node(state: ProductWorkflowState) -> Dict[str, Any]:
     delegate = state.get("generation_delegate")
     if delegate:
         res = await delegate(state) if callable(delegate) else {}
-        return {**res, "current_stage": stage, "stage_history": history}
+        return {"current_stage": stage, **res, "stage_history": history}
 
     post = state.get("generated_post")
     if not post:
@@ -332,7 +332,7 @@ async def evaluate_content_node(state: ProductWorkflowState) -> Dict[str, Any]:
     delegate = state.get("evaluation_delegate")
     if delegate:
         res = await delegate(state) if callable(delegate) else {}
-        return {**res, "current_stage": stage, "stage_history": history}
+        return {"current_stage": stage, **res, "stage_history": history}
 
     evaluation = state.get("evaluation")
     content_version = state.get("content_version")
@@ -443,13 +443,14 @@ def route_after_strategy(state: ProductWorkflowState) -> str:
 
 
 def route_after_generation(state: ProductWorkflowState) -> str:
-    if state.get("status") == "error" or not state.get("generated_post"):
+    # "halted" here means a person-edited post went stale: stop rather than evaluate or overwrite it.
+    if state.get("status") in ("error", "halted") or not state.get("generated_post"):
         return END
     return "node_evaluate_content"
 
 
 def route_after_evaluation(state: ProductWorkflowState) -> str:
-    if state.get("status") == "error" or not state.get("evaluation_current"):
+    if state.get("status") in ("error", "halted") or not state.get("evaluation_current"):
         return END
     return "node_human_review_boundary"
 
