@@ -3,8 +3,8 @@
 Hard errors — the draft is regenerated with the reasons fed back:
   missing fields, too few distinct alternative hooks, over the platform character limit,
   unresolved placeholders or leaked JSON, figures that appear nowhere in the approved context,
-  another product's name (cross-product leakage), a competitor's name, text copied from competitor
-  evidence, and a post that never names the product.
+  guarantee / certain-outcome promises the approved context does not make, another product's name (cross-product
+  leakage), a competitor's name, text copied from competitor evidence, and a post that never names the product.
 Soft findings — kept on the draft for review and for the later Evaluate phase:
   hook longer than the "see more" fold, extra hashtags trimmed, product claims without evidence,
   weak alignment with the selected content pillar (app/ai/pillar_alignment.py: the pillar's name, or —
@@ -20,6 +20,14 @@ from .platform_policy import PlatformPolicy
 
 _PLACEHOLDER = re.compile(
     r"\[(?:insert|your|product|company|name|link|audience)[^\]]*\]|\{\{|\}\}|lorem ipsum|\bTODO\b|\bTBD\b|<[a-z_ -]+>|\bXX+\b",
+    re.I,
+)
+# Promises of guaranteed or certain outcomes (especially financial ones). No approved profile, strategy or source can
+# back these up unless it says so itself, and they are the kind of wording that gets a post removed or a company sued.
+_ABSOLUTE = re.compile(
+    r"\b(?:guarantee[ds]?|risk[- ]free|zero[- ]risk|"
+    r"(?:will|guaranteed to|certain to|sure to)\s+(?:definitely\s+|certainly\s+)?(?:save|earn|make|double|triple|boost|grow|cut|slash|increase)\b"
+    r"[^.!?\n]{0,40}\b(?:money|revenue|income|profit|savings|costs?|sales|returns?))\b",
     re.I,
 )
 _JSON_LEAK = re.compile(r'^\s*[\[{]|"\w+"\s*:\s*["\[{]', re.M)
@@ -44,6 +52,17 @@ def assemble(post: Dict) -> str:
 def _clean_hashtag(tag: str) -> str:
     tag = re.sub(r"[^\w]", "", str(tag or ""))
     return f"#{tag}" if tag else ""
+
+
+def absolute_claims(text: str, corpus: str) -> List[str]:
+    """Guarantee / certain-outcome phrases in the post that the approved context does not itself contain."""
+    corpus_norm = norm(corpus)
+    found = []
+    for match in _ABSOLUTE.finditer(text or ""):
+        phrase = match.group(0).strip()
+        if norm(phrase) not in corpus_norm and phrase.lower() not in (c.lower() for c in found):
+            found.append(phrase)
+    return found
 
 
 def _copied_from(post_text: str, sources: List[str], window: int = 8) -> bool:
@@ -109,6 +128,10 @@ def validate_post(post: Dict, allowed_refs: List[str], corpus: str, meta: Dict, 
     if has_unsupported_numbers(text, corpus):
         error("unsupported_number", "The post contains a figure that does not appear in the approved profile, strategy, or sources "
                       "(no invented statistics, prices, or results).")
+
+    for phrase in absolute_claims(text, corpus):
+        error("absolute_claim", f"The post promises a guaranteed or certain outcome (\"{phrase}\") that nothing in the approved "
+                                "profile, strategy or sources supports. Describe what the product does, not what it guarantees.")
 
     lowered = text.lower()
     for name in meta.get("forbidden_names") or []:

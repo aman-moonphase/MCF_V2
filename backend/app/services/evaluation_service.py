@@ -39,6 +39,13 @@ def _summary(e: ContentEvaluation) -> Dict[str, Any]:
 
 
 async def latest_evaluation(db: AsyncSession, draft: GeneratedContent) -> Optional[ContentEvaluation]:
+    # Prioritize latest evaluation matching this draft's specific version
+    current = (await db.execute(select(ContentEvaluation).where(
+        ContentEvaluation.generated_content_id == draft.id,
+        ContentEvaluation.content_version == draft.version,
+    ).order_by(ContentEvaluation.created_at.desc()).limit(1))).scalar_one_or_none()
+    if current is not None:
+        return current
     return (await db.execute(select(ContentEvaluation).where(ContentEvaluation.generated_content_id == draft.id)
                              .order_by(ContentEvaluation.created_at.desc()).limit(1))).scalar_one_or_none()
 
@@ -107,6 +114,8 @@ class EvaluationService:
             validation=validation, evidence=snapshot.get("evidence") or {},
             stale_reasons=self.generation.stale_reasons(draft, ready["product"], ready["strategy"], ready["approved_type"]),
             policy=platform_policy(),
+            audience_persona=snapshot.get("audience_persona"),
+            editorial_tone=snapshot.get("editorial_tone") or "professional",
         )
 
     async def _excerpt_status(self, project: Project, snapshot: dict) -> Dict[str, Dict[str, Any]]:
@@ -164,19 +173,27 @@ class EvaluationService:
         history: List[ContentEvaluation] = list((await self.db.execute(
             select(ContentEvaluation).where(ContentEvaluation.generated_content_id == draft.id)
             .order_by(ContentEvaluation.created_at.desc()))).scalars().all())
+
+        # Select latest evaluation matching the current draft version
+        current_eval = next((e for e in history if e.content_version == draft.version), None)
         latest = history[0] if history else None
-        if latest is None:
-            status_, reason = "not_evaluated", f"Version {draft.version} has not been evaluated yet."
-        elif latest.content_version != draft.version:
+
+        if current_eval is not None:
+            active_eval = current_eval
+            status_, reason = "current", None
+        elif latest is not None:
+            active_eval = latest
             status_, reason = "stale", (f"This evaluation is for version {latest.content_version}; the saved post is now "
                                         f"version {draft.version}. Re-evaluate it.")
         else:
-            status_, reason = "current", None
+            active_eval = None
+            status_, reason = "not_evaluated", f"Version {draft.version} has not been evaluated yet."
+
         return {
             **base, "status": status_, "reason": reason, "can_proceed": status_ == "current",
             "draft": {"id": draft.id, "version": draft.version, "status": draft.status, "edited": draft.edited,
                       "is_demo": draft.is_demo, "provider": draft.provider},
-            "evaluation": ({**_summary(latest), "result": latest.result} if latest else None),
+            "evaluation": ({**_summary(active_eval), "result": active_eval.result} if active_eval else None),
             "history": [_summary(e) for e in history],
         }
 

@@ -73,6 +73,18 @@ def _audience(sentence: str):
     m = _AUDIENCE.search(sentence)
     return _AUDIENCE_LEAD.sub("", m.group(1)).strip() if m else None
 _CADENCE = re.compile(r"\b(daily|every (day|week|month)|weekly|monthly|\d+ (posts?|videos?|episodes?|times) (a|per) (day|week|month))\b", re.I)
+# A posting cadence is how often the competitor PUBLISHES. "Sites on a plan share your monthly pageviews" is about pricing.
+_PUBLISHING_WORDS = re.compile(r"\b(?:post\w*|publish\w*|newsletters?|blogs?|articles?|videos?|episodes?|podcasts?|webinars?|events?|workshops?|live ?streams?|updates?|content|releases?|share[sd]? (?:new|stories))\b", re.I)
+_NOT_PUBLISHING = re.compile(r"\b(?:pageviews?|page views?|plans?|billed|billing|pric\w*|per month|a month|seats?|quota|limits?|invoice\w*|subscription)\b|[$\u20ac\u00a3]", re.I)
+# Navigation, buttons and page chrome that a scraped page repeats; none of it is the company's positioning or message.
+_UI_CHROME = re.compile(
+    r"^\s*(?:skip to\b|view (?:a|the|our)\b|read (?:more|article|the)\b|learn more\b|sign[- ]?(?:in|up)\b|log[- ]?in\b|get started\b|"
+    r"start (?:free|your|a)\b|try (?:it|for)\b|book a\b|contact (?:us|sales)\b|help cent(?:re|er)\b|menu\b|search\b|accept\b|"
+    r"cookie\w*\b|privacy policy\b|terms\b|back to\b|next\b|previous\b|share\b)", re.I)
+
+
+def _is_cadence(sentence: str) -> bool:
+    return bool(_CADENCE.search(sentence)) and bool(_PUBLISHING_WORDS.search(sentence)) and not _NOT_PUBLISHING.search(sentence)
 _STRENGTH = re.compile(r"\b(only|first|award|trusted|leading|no credit card|free plan|free forever|integrat\w*)\b", re.I)
 
 
@@ -158,7 +170,7 @@ def build_demo_competitor_analysis(prompt: str) -> dict:
     audiences: List[tuple] = []
     for item in items:
         label, text = item["label"], item["text"]
-        sentences = [s for s in _sentences(text) if not has_mojibake(s)]  # never quote unrecoverable text
+        sentences = [s for s in _sentences(text) if not has_mojibake(s) and not _UI_CHROME.search(s)]  # never quote unrecoverable text or page chrome
         if sentences and not out["overview"] and label != "N":
             out["overview"].append(_finding(f"{name}: {sentences[0]}", "observed", [label]))
         for s in sentences:
@@ -166,16 +178,16 @@ def build_demo_competitor_analysis(prompt: str) -> dict:
             if key in seen:
                 continue
             seen.add(key)
-            if _POSITIONING.search(s) and len(out["positioning"]) < 3:
+            if _POSITIONING.search(s) and len(s.split()) >= 4 and len(out["positioning"]) < 3:
                 out["positioning"].append(_finding(s, "observed", [label]))
             audience = _audience(s)
             if audience:
                 audiences.append((audience, s, label))
-            if _CADENCE.search(s):
+            if _is_cadence(s):
                 out["posting_cadence"].append(_finding(s, "observed", [label]))
             if _STRENGTH.search(s) and len(out["strengths"]) < 3:
                 out["strengths"].append(_finding(f"Claims: \"{s}\"", "observed", [label]))
-            if 4 <= len(s.split()) <= 12 and len(out["messaging_themes"]) < 3 and not _CADENCE.search(s):
+            if 4 <= len(s.split()) <= 12 and len(out["messaging_themes"]) < 3 and not _is_cadence(s):
                 out["messaging_themes"].append(_finding(f"Message used: \"{s}\"", "observed", [label]))
 
         for channel, pattern in _CHANNELS.items():

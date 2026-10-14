@@ -3,3 +3,13 @@ node_modules/
 __pycache__/
 venv/
 .pytest_cache/
+
+# Scratch & temporary analysis scripts
+extract.py
+find_missing.py
+jo3_app.js
+jo3_features.txt
+backend/patch_demo.py
+backend/remove_55.py
+backend/test_db.py
+backend/update_nodes.py

@@ -48,6 +48,8 @@ class EvaluationContext:
     competitor_limited: bool = False          # Competitor Analysis was approved with limited evidence
     # Retrieved excerpts cited by the post: ref -> {"status": current|changed|missing, "content": str}
     excerpts: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    audience_persona: Optional[str] = None
+    editorial_tone: Optional[str] = None
 
 
 class ContentEvaluator(Protocol):

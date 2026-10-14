@@ -69,6 +69,8 @@ def body_for(path: str, method: str, ids: dict):
         ("/competitor-analysis/approve", {"project_id": ids["project"], "version": 1, "limited_evidence": True}),
         ("/promotion-strategy/approve", {"project_id": ids["project"], "version": 1}),
         ("/competitors/discover", {"query": "x"}),
+        ("/signals/ingest", {"title": "Injected signal", "source_url": "https://example.com/a"}),
+        ("/ugc/ingest", {"title": "Injected thread", "source_url": "https://example.com/r"}),
         ("/competitors/{competitor_id}/evidence", None),
         ("/competitors", {"name": "Intruder Inc"}),
         ("/competitors/{competitor_id}", {"name": "Renamed by B"}),
@@ -109,7 +111,7 @@ async def build_journey(client, db):
 def fill(url: str, ids: dict) -> str:
     mapping = {"project_id": ids["project"], "product_id": ids["product"], "source_id": ids["source"],
                "competitor_id": ids["competitor"], "evidence_id": ids["evidence"], "schedule_id": ids["schedule"],
-               "stage_type": ids["stage"]}
+               "stage_type": ids["stage"], "version": "1"}  # a strategy version number is not a secret id
     for key, value in mapping.items():
         url = url.replace("{" + key + "}", value)
     assert "{" not in url, f"unmapped path parameter in {url}"

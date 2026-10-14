@@ -10,6 +10,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.services.generation_service import MAX_INSTRUCTIONS_CHARS, GenerationService
+from app.services.image_service import ImageService
 
 # Mounted at /api/projects
 router = APIRouter()
@@ -38,6 +39,7 @@ class GeneratedDraft(BaseModel):
     usage: Optional[Dict[str, Any]] = None  # API usage + estimated cost of the generating request(s); None in Demo Mode
     context_snapshot: Optional[Dict[str, Any]] = None
     evidence: List[Dict[str, str]] = []
+    image: Optional[Dict[str, Any]] = None
 
 
 class GenerationStateResponse(BaseModel):
@@ -59,6 +61,13 @@ class GenerateRequest(BaseModel):
     # Only choices are accepted from the client; all context is loaded server-side.
     pillar_index: int = 0
     instructions: Optional[str] = Field(default=None, max_length=MAX_INSTRUCTIONS_CHARS)
+    audience_persona: Optional[str] = None
+    editorial_tone: Optional[str] = None
+
+
+class PreferencesRequest(BaseModel):
+    audience_persona: Optional[str] = None
+    editorial_tone: Optional[str] = None
 
 
 class ApprovePostRequest(BaseModel):
@@ -84,8 +93,21 @@ async def get_generated_content(project_id: UUID, db: AsyncSession = Depends(get
 async def generate_content(project_id: UUID, body: GenerateRequest, db: AsyncSession = Depends(get_db),
                            user: User = Depends(get_current_user)):
     service = GenerationService(db, user.id)
-    await service.generate(project_id, body.pillar_index, body.instructions)
+    await service.generate(
+        project_id,
+        pillar_index=body.pillar_index,
+        instructions=body.instructions,
+        audience_persona=body.audience_persona,
+        editorial_tone=body.editorial_tone,
+    )
     return await service.state(project_id)
+
+
+@router.put("/{project_id}/generated-content/preferences", response_model=GenerationStateResponse)
+async def save_preferences(project_id: UUID, body: PreferencesRequest, db: AsyncSession = Depends(get_db),
+                           user: User = Depends(get_current_user)):
+    service = GenerationService(db, user.id)
+    return await service.save_preferences(project_id, body.audience_persona, body.editorial_tone)
 
 
 @router.patch("/{project_id}/generated-content", response_model=GenerationStateResponse)
@@ -104,3 +126,70 @@ async def approve_generated_content(project_id: UUID, body: ApprovePostRequest, 
     service = GenerationService(db, user.id)
     await service.approve(project_id, body.version)
     return await service.state(project_id)
+
+
+class GenerateImageRequest(BaseModel):
+    prompt: Optional[str] = None
+    aspect_ratio: str = "16:9"
+    style: str = "professional"
+    alt_text: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class UpdateImageRequest(BaseModel):
+    prompt: Optional[str] = None
+    alt_text: Optional[str] = None
+    style: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+
+
+@router.post("/{project_id}/generated-content/image", response_model=GenerationStateResponse)
+async def generate_content_image(
+    project_id: UUID,
+    body: Optional[GenerateImageRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Generate or regenerate an optional creative visual asset for the current saved post version."""
+    req = body or GenerateImageRequest()
+    service = ImageService(db, user.id)
+    await service.generate_image(
+        project_id=project_id,
+        prompt=req.prompt,
+        aspect_ratio=req.aspect_ratio,
+        style=req.style,
+        alt_text=req.alt_text,
+        provider=req.provider,
+    )
+    return await GenerationService(db, user.id).state(project_id)
+
+
+@router.patch("/{project_id}/generated-content/image", response_model=GenerationStateResponse)
+async def update_content_image(
+    project_id: UUID,
+    body: UpdateImageRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Update prompt, alt text, or style of the current post's creative visual asset."""
+    service = ImageService(db, user.id)
+    await service.update_image(
+        project_id=project_id,
+        prompt=body.prompt,
+        alt_text=body.alt_text,
+        style=body.style,
+        aspect_ratio=body.aspect_ratio,
+    )
+    return await GenerationService(db, user.id).state(project_id)
+
+
+@router.delete("/{project_id}/generated-content/image", response_model=GenerationStateResponse)
+async def delete_content_image(
+    project_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Remove the creative visual asset from the current post."""
+    service = ImageService(db, user.id)
+    await service.delete_image(project_id)
+    return await GenerationService(db, user.id).state(project_id)

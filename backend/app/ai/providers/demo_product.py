@@ -43,11 +43,30 @@ _VALUE_CUE = re.compile(
     r"\b(?:so (?:that )?\w+(?: \w+)? can|helps|lets|allows|enables|instead of|rather than)\b|, not \w+ing\b", re.I)
 _PROBLEM_CUES = re.compile(r"\b(hate|struggl\w*|wast\w*|overlook\w*|manual\w*|frustrat\w*|difficult|hard to|pain\w*|tedious|error-prone|miss\w*)\b", re.I)
 _URL = re.compile(r"(https?://[^\s,)]+|www\.[^\s,)]+)", re.I)
+_CLAUSE_MARKER = re.compile(r"\b(?:which|that|when|where|because|if|while|whose)\b", re.I)
+_ANAPHORIC_START = re.compile(r"^\s*(?:this|these|that|those|such|so|and|but|also|however)\b", re.I)
+_MONEY_TOPIC = re.compile(r"\b(?:revenue|funded|funding|investors?|profitable|pricing|price|subscriptions?|per (?:month|year)|freemium|free plan)\b", re.I)
+
+
+def _product_is_subject(prefix: str, name: Optional[str]) -> bool:
+    """True when the words before a cue ("... includes a, b") are about the PRODUCT (its name, "it", "we", "our plan"),
+    not about something else in the text ("Every HTTP request includes IP address and User-Agent")."""
+    prefix = prefix.strip().strip(",")
+    if not prefix:
+        return True
+    if _CLAUSE_MARKER.search(prefix) or len(prefix.split()) > 5:
+        return False
+    first = prefix.split()[0].lower()
+    if first in ("it", "we", "our", "the") or (name and name.split()[0].lower() in prefix.lower()):
+        return True
+    return bool(re.search(r"\b(?:plans?|app|tool|platform|product|service|software|dashboard|tier)\s*$", prefix, re.I))
 
 
 def _field_for(label: str) -> Optional[str]:
     label = label.strip().lower()
     for field, keywords in _LABEL_MAP:
+        if field == "name" and label in ("project name", "project title", "project", "campaign name", "campaign"):
+            continue
         if any(k in label for k in keywords):
             return field
     return None
@@ -112,33 +131,129 @@ def _labelled(source: str) -> Dict[str, str]:
         match = _LABEL_PATTERN.match(sentence)
         if not match:
             continue
-        label, body = match.group(1).strip().lower(), match.group(2).strip()
-        for field, keywords in _LABEL_MAP:
-            if any(k in label for k in keywords) and field not in found:
-                found[field] = body
-                break
+        field = _field_for(match.group(1))
+        if field and field not in found:
+            found[field] = match.group(2).strip()
     return found
 
 
+_NON_NAMES = {
+    "it", "this", "our", "we", "the", "that", "a", "an", "here", "there",
+    "what", "which", "how", "who", "when", "where", "why",
+    "all", "each", "every", "some", "any", "no", "not",
+    "create", "build", "launch", "make", "start", "run",
+    "project", "campaign", "idea", "document", "source", "test",
+    "product", "service", "tool", "app", "application", "platform", "software",
+    "in", "on", "at", "by", "with", "from", "to", "for", "about",
+    "features", "feature", "benefits", "benefit", "pricing", "price",
+    "overview", "description", "details", "summary", "notes", "goals", "goal",
+    "audience", "users", "competitors", "alternatives",
+}
+
+
+def _clean_name(cand: str) -> str:
+    name = cand.strip().rstrip(".!?:;,")
+    words = name.split()
+    half = len(words) // 2
+    # Web pages often repeat the title right before the first sentence ("Plausible Analytics Plausible Analytics is ...").
+    if len(words) % 2 == 0 and half and words[:half] == words[half:]:
+        name = " ".join(words[:half])
+    return name
+
+
+def _is_valid_name(cand: str) -> bool:
+    cleaned = _clean_name(cand)
+    if not cleaned or not cleaned[0].isupper():
+        return False
+    words = cleaned.split()
+    if not (1 <= len(words) <= 4):
+        return False
+    if words[0].lower() in _NON_NAMES or cleaned.lower() in _NON_NAMES:
+        return False
+    return True
+
+
+def _opening_sentence(sentence: str) -> tuple[Optional[str], str, str]:
+    # A page title in front of the first sentence ("About | Plausible Analytics ...") is not part of the sentence.
+    if "|" in sentence:
+        head, tail = sentence.split("|", 1)
+        if len(head.split()) <= 4 and tail.strip():
+            sentence = tail.strip()
+    label = _LABEL_PATTERN.match(sentence)
+    if label:
+        lbl_head = label.group(1).strip().lower()
+        if lbl_head in ("project name", "project title", "project", "campaign name", "campaign"):
+            return None, "", ""
+        if lbl_head in ("product", "name", "brand", "product name"):
+            sentence = label.group(2).strip()
+
+    # 1. Preamble with for/about/introducing/launching/called/named + Candidate + separator/comma/is + rest
+    # e.g. "Create a test project for FocusFlow, a lightweight scheduling tool for independent music tutors"
+    m = re.search(
+        r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})"
+        r"(?:,\s*|\s*[-—–:]\s+|\s+is\s+)((?:an?|the)\s+.+)$",
+        sentence,
+        re.I,
+    )
+    if m and _is_valid_name(m.group(1)):
+        cand, rest = _clean_name(m.group(1)), m.group(2).strip()
+        return cand, f"{cand} is {rest}.", rest
+
+    # 2. Appositive at start: "FocusFlow, a lightweight scheduling tool for independent music tutors"
+    m = re.match(
+        r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}),\s+((?:an?|the)\s+.+)$",
+        sentence,
+    )
+    if m and _is_valid_name(m.group(1)):
+        cand, rest = _clean_name(m.group(1)), m.group(2).strip()
+        return cand, f"{cand} is {rest}.", rest
+
+    # 3. Direct "StudioDesk is a booking app for …" — a capitalised name of 1-4 words, then "is a/an/the".
+    m = re.match(r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}) is ((?:an?|the) .+)$", sentence)
+    if m and _is_valid_name(m.group(1)):
+        cand = _clean_name(m.group(1))
+        return cand, f"{sentence}.", m.group(2).strip()
+
+    # 4. Separator in (" - ", " — ", " – ", ": ")
+    for separator in (" - ", " — ", " – ", ": "):
+        if separator in sentence:
+            head, rest = sentence.split(separator, 1)
+            head, rest = head.strip(), rest.strip()
+            pre_m = re.search(
+                r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})$",
+                head,
+                re.I,
+            )
+            if pre_m and _is_valid_name(pre_m.group(1)):
+                cand = _clean_name(pre_m.group(1))
+                return cand, f"{cand} is {rest}.", rest
+            elif _is_valid_name(head):
+                cand = _clean_name(head)
+                return cand, f"{cand} is {rest}.", rest
+
+    # 5. Preamble ending with product name only (e.g. "Create a test project for FocusFlow.")
+    m = re.search(
+        r"\b(?:for|about|introducing|launching|called|named)\s+([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3})\.?$",
+        sentence,
+        re.I,
+    )
+    if m and _is_valid_name(m.group(1)):
+        cand = _clean_name(m.group(1))
+        return cand, f"{sentence}.", sentence
+
+    return None, f"{sentence}.", sentence
+
+
 def _opening(source: str) -> tuple[Optional[str], str, str]:
-    """(name, description, descriptor) from the first sentence."""
+    """(name, description, descriptor) from the first sentence or opening sentences."""
     sentences = _sentences(source)
     if not sentences:
         return None, "", ""
-    first = sentences[0]
-    label = _LABEL_PATTERN.match(first)
-    if label and label.group(1).strip().lower() in ("product", "name", "brand", "product name"):
-        first = label.group(2).strip()
-    # "StudioDesk is a booking app for …" — a capitalised name of 1-4 words, then "is a/an/the".
-    m = re.match(r"^([A-Z][\w.&'-]*(?: [A-Z][\w.&'-]*){0,3}) is ((?:an?|the) .+)$", first)
-    if m and m.group(1).split()[0].lower() not in ("it", "this", "our", "we", "the", "that"):
-        return m.group(1), f"{first}.", m.group(2)
-    for separator in (" - ", " — ", " – ", ": "):
-        if separator in first:
-            head, rest = first.split(separator, 1)
-            if 1 <= len(head.split()) <= 4 and head[:1].isupper():
-                return head.strip(), f"{head.strip()} is {rest.strip()}.", rest.strip()
-    return None, f"{first}.", first
+    for s in sentences[:5]:
+        cand, desc, descriptor = _opening_sentence(s)
+        if cand:
+            return cand, desc, descriptor
+    return _opening_sentence(sentences[0])
 
 
 def _descriptor(description: str, name: Optional[str]) -> str:
@@ -161,7 +276,7 @@ def _prose_fields(source: str, profile: Dict[str, object], name: Optional[str]) 
     if not profile.get("key_features"):
         for x in sentences:
             m = _FEATURE_CUE.search(x)
-            if m:
+            if m and _product_is_subject(x[:m.start()], name):
                 items = [_cap(_clean(i)) for i in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(1)) if _clean(i)]
                 if len(items) >= 2:
                     profile["key_features"] = items
@@ -169,14 +284,21 @@ def _prose_fields(source: str, profile: Dict[str, object], name: Optional[str]) 
                     break
     if not profile.get("differentiators"):
         for x in sentences:
-            if x not in used and _DIFFERENTIATOR_CUE.search(x):
+            if x not in used and _DIFFERENTIATOR_CUE.search(x) and not _MONEY_TOPIC.search(x):
                 profile["differentiators"] = [_shorten(x, 200)]
+                used.add(x)
+                break
+    if not profile.get("business_model"):
+        for x in sentences:
+            if x not in used and re.search(r"\bsubscription\b|\bfreemium\b|\bone-time (?:purchase|payment)\b", x, re.I) \
+                    and re.search(r"\b(?:revenue|plans?|pricing|pay|paid|billed|charge[sd]?)\b", x, re.I) and not _CLAUSE_MARKER.search(x):
+                profile["business_model"] = _shorten(x, 200)
                 used.add(x)
                 break
     if not profile.get("value_proposition"):
         description = str(profile.get("description") or "").rstrip(".")
         for x in sentences:
-            if x not in used and x != description and _VALUE_CUE.search(x):
+            if x not in used and x != description and _VALUE_CUE.search(x) and not _ANAPHORIC_START.match(x):
                 profile["value_proposition"] = _shorten(x, 300)
                 break
 

@@ -73,6 +73,7 @@ export function EvaluateImproveStage({ project, activeStage, onComplete, onSelec
 
   useEffect(() => {
     let cancelled = false;
+    setIsLoading(true);
     (async () => {
       try {
         const s = await EvaluationService.get(project.id);
@@ -84,7 +85,7 @@ export function EvaluateImproveStage({ project, activeStage, onComplete, onSelec
       }
     })();
     return () => { cancelled = true; };
-  }, [project.id]);
+  }, [project.id, activeStage?.id]);
 
   const generateStage = project.stages.find((s) => s.type === 'generate-content');
   const backToGenerate = generateStage && onSelectStage ? (

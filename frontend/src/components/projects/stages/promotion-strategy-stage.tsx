@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Project, WorkflowStage } from '@/types/project';
 import { ProductService } from '@/lib/services/product.service';
 import { Grounding, PromotionStrategy, StrategyService, StrategyState } from '@/lib/services/strategy.service';
-import { AlertTriangle, CheckCircle2, Compass, Edit3, Loader2, Lock, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Compass, Edit3, Loader2, Lock, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -86,6 +86,7 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
   const [busy, setBusy] = useState<'generate' | 'save' | 'approve' | null>(null);
   const [draft, setDraft] = useState<PromotionStrategy | null>(null);
   const [pendingRemoveIndex, setPendingRemoveIndex] = useState<number | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -235,7 +236,7 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
               </button>
               {!approved && (
                 <button onClick={approve} disabled={!!busy || state.stale || !state.prerequisitesMet} className={cn(pill, 'bg-primary text-primary-foreground shadow-md')}>
-                  {busy === 'approve' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}Approve Strategy
+                  {busy === 'approve' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}{state.approvedVersion ? 'Approve Again' : 'Approve Strategy'}
                 </button>
               )}
             </>
@@ -248,6 +249,22 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
           <p>{!state.prerequisitesMet ? state.prerequisiteProblem : 'The Product Profile or Competitor Analysis changed after this strategy was generated. Regenerate it before approving.'}</p>
         </div>
+      )}
+
+      {!editing && (
+        <section aria-labelledby="strategy-key-decisions" className="glass-panel p-6 rounded-3xl space-y-3 border-primary/20">
+          <h4 id="strategy-key-decisions" className="text-sm font-semibold tracking-widest uppercase text-primary">What to review</h4>
+          <p className="text-sm text-muted-foreground">
+            We drafted this plan from your approved Product Profile{state.basis?.competitors?.length ? ' and the competitor evidence you supplied' : ''}.
+            Check these key decisions. Editing is optional: everything else already has a sensible default.
+          </p>
+          <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
+            <div><dt className={label}>Positioning</dt><dd className="text-sm text-foreground/90">{s.executiveSummary.positioning || '—'}</dd></div>
+            <div><dt className={label}>Who it is for</dt><dd className="text-sm text-foreground/90">{s.audience.primaryAudience || '—'}</dd></div>
+            <div><dt className={label}>Main channel and format</dt><dd className="text-sm text-foreground/90">{(s.channels.find((c) => c.priority === 'primary') || s.channels[0])?.channel || '—'} · {cd.primaryContentType}</dd></div>
+            <div><dt className={label}>Content pillars</dt><dd className="text-sm text-foreground/90">{s.contentPillars.map((p) => p.name).join(', ') || '—'}</dd></div>
+          </dl>
+        </section>
       )}
 
       <Section title="Executive summary" grounding={s.executiveSummary.grounding}>
@@ -285,77 +302,6 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
         </div>
       </Section>
 
-      <Section title="Channel priorities">
-        <div className="space-y-3">
-          {s.channels.map((c, i) => (
-            <div key={i} className="rounded-2xl border border-border/50 p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold text-foreground">
-                    {c.channel}
-                    <span className={cn('ml-2 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border',
-                      c.priority === 'primary' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted text-muted-foreground border-border/50')}>{c.priority}</span>
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {!editing && <GroundingBadge g={c.grounding} />}
-                  {editing && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (s.channels.length <= 1) {
-                          toast.error('At least one channel must remain in the strategy.');
-                          return;
-                        }
-                        setPendingRemoveIndex(pendingRemoveIndex === i ? null : i);
-                      }}
-                      disabled={s.channels.length <= 1}
-                      title={s.channels.length <= 1 ? 'At least one channel must remain active' : `Remove ${c.channel}`}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer',
-                        pendingRemoveIndex === i
-                          ? 'bg-muted text-foreground border-border'
-                          : 'text-destructive border-destructive/20 hover:bg-destructive/10 disabled:opacity-40 disabled:cursor-not-allowed'
-                      )}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Remove</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {editing && pendingRemoveIndex === i && (
-                <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-destructive animate-in fade-in duration-200">
-                  <span>
-                    Remove <strong>{c.channel}</strong> from active channel priorities?
-                  </span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => removeChannel(i)}
-                      className="px-3 py-1 rounded-lg bg-destructive text-destructive-foreground font-semibold hover:bg-destructive/90 transition-colors cursor-pointer"
-                    >
-                      Confirm Remove
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPendingRemoveIndex(null)}
-                      className="px-3 py-1 rounded-lg bg-muted text-foreground font-medium hover:bg-muted/80 transition-colors cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <Text value={c.rationale} editing={editing} onChange={set(['channels', i, 'rationale'])} />
-              {c.formats.length > 0 && !editing && <p className="text-xs text-muted-foreground">Formats: {c.formats.join(', ')}</p>}
-            </div>
-          ))}
-        </div>
-      </Section>
-
       <Section title="Recommended content type" grounding={cd.grounding}>
         <div className="space-y-3">
           {editing ? (
@@ -378,51 +324,212 @@ export function PromotionStrategyStage({ project, activeStage, onComplete }: Pro
         </div>
       </Section>
 
-      <Section title="Publishing cadence" grounding={s.cadence.grounding}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div><p className={label}>Frequency</p><Text value={s.cadence.frequency} editing={editing} onChange={set(['cadence', 'frequency'])} rows={1} /></div>
-          <div><p className={label}>Planning horizon</p><Text value={s.cadence.planningHorizon} editing={editing} onChange={set(['cadence', 'planningHorizon'])} rows={1} /></div>
-          <div className="md:col-span-2"><p className={label}>Rationale</p><Text value={s.cadence.rationale} editing={editing} onChange={set(['cadence', 'rationale'])} /></div>
-        </div>
-        {s.cadence.isHypothesis && <p className="text-xs text-amber-500">Recommendation to test — not proven by performance data.</p>}
-      </Section>
+      <div className="glass-panel rounded-3xl">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+          aria-controls="strategy-advanced-settings"
+          className="w-full flex items-center justify-between gap-4 p-6 text-left rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+        >
+          <span>
+            <span className="block text-sm font-semibold tracking-widest uppercase text-primary">Advanced settings</span>
+            <span className="block text-sm text-muted-foreground mt-1">
+              Channel priorities, publishing cadence, initial roadmap and measurement plan. Sensible defaults are already filled in.
+            </span>
+          </span>
+          <ChevronDown className={cn('w-5 h-5 shrink-0 text-muted-foreground transition-transform', showAdvanced && 'rotate-180')} aria-hidden="true" />
+        </button>
+        {showAdvanced && (
+          <div id="strategy-advanced-settings" className="px-6 pb-6 space-y-6">
+          <Section title="Channel priorities">
+            <div className="space-y-3">
+              {s.channels.map((c, i) => (
+                <div key={i} className="rounded-2xl border border-border/50 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-foreground">{c.channel}</p>
+                      {editing ? (
+                        <select
+                          value={c.priority}
+                          onChange={(e) => set(['channels', i, 'priority'])(e.target.value)}
+                          className="ml-2 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border bg-background font-medium focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                        >
+                          <option value="primary">primary</option>
+                          <option value="secondary">secondary</option>
+                        </select>
+                      ) : (
+                        <span className={cn('ml-2 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border',
+                          c.priority === 'primary' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-muted text-muted-foreground border-border/50')}>{c.priority}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {!editing && <GroundingBadge g={c.grounding} />}
+                      {editing && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (s.channels.length <= 1) {
+                              toast.error('At least one channel must remain in the strategy.');
+                              return;
+                            }
+                            setPendingRemoveIndex(pendingRemoveIndex === i ? null : i);
+                          }}
+                          disabled={s.channels.length <= 1}
+                          title={s.channels.length <= 1 ? 'At least one channel must remain active' : `Remove ${c.channel}`}
+                          className={cn(
+                            'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer',
+                            pendingRemoveIndex === i
+                              ? 'bg-muted text-foreground border-border'
+                              : 'text-destructive border-destructive/20 hover:bg-destructive/10 disabled:opacity-40 disabled:cursor-not-allowed'
+                          )}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Remove</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
 
-      <Section title="Initial roadmap">
-        <div className="space-y-3">
-          {s.roadmap.map((r, i) => (
-            <div key={i} className="rounded-2xl border border-border/50 p-4 grid grid-cols-1 md:grid-cols-[110px_1fr] gap-3">
-              <div>
-                <p className="font-semibold text-foreground">{r.timing}</p>
-                <p className="text-xs text-muted-foreground">{r.channel} · {r.format}</p>
-              </div>
-              <div className="space-y-1.5">
-                {editing ? <input value={r.topic} onChange={(e) => set(['roadmap', i, 'topic'])(e.target.value)} className={cn(field, 'font-medium')} />
-                  : <p className="font-medium text-foreground">{r.topic}</p>}
-                <Text value={r.objective} editing={editing} onChange={set(['roadmap', i, 'objective'])} rows={1} />
-                <p className="text-xs text-muted-foreground">Audience: {r.audience}</p>
-                <p className="text-xs text-muted-foreground">How to evaluate: {editing ? '' : r.successEvaluation}</p>
-                {editing && <Text value={r.successEvaluation} editing onChange={set(['roadmap', i, 'successEvaluation'])} rows={1} />}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Section>
+                  {editing && pendingRemoveIndex === i && (
+                    <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-destructive animate-in fade-in duration-200">
+                      <span>
+                        Remove <strong>{c.channel}</strong> from active channel priorities?
+                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => removeChannel(i)}
+                          className="px-3 py-1 rounded-lg bg-destructive text-destructive-foreground font-semibold hover:bg-destructive/90 transition-colors cursor-pointer"
+                        >
+                          Confirm Remove
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPendingRemoveIndex(null)}
+                          className="px-3 py-1 rounded-lg bg-muted text-foreground font-medium hover:bg-muted/80 transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-      <Section title="Measurement plan">
-        <div className="space-y-3">
-          {s.measurement.map((m, i) => (
-            <div key={i} className="space-y-1">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-medium text-foreground">{m.indicator}</p>
-                {!editing && <GroundingBadge g={m.grounding} />}
-              </div>
-              <Text value={m.whatToMeasure} editing={editing} onChange={set(['measurement', i, 'whatToMeasure'])} rows={1} />
-              <p className="text-xs text-muted-foreground">{m.why}</p>
+                  <Text value={c.rationale} editing={editing} onChange={set(['channels', i, 'rationale'])} />
+                  {c.formats.length > 0 && !editing && <p className="text-xs text-muted-foreground">Formats: {c.formats.join(', ')}</p>}
+                </div>
+              ))}
             </div>
-          ))}
-          <p className="text-xs text-muted-foreground">No targets are set: there is no measured performance data yet.</p>
-        </div>
-      </Section>
+          </Section>
+
+          <Section title="Publishing cadence" grounding={s.cadence.grounding}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div><p className={label}>Frequency</p><Text value={s.cadence.frequency} editing={editing} onChange={set(['cadence', 'frequency'])} rows={1} /></div>
+              <div><p className={label}>Planning horizon</p><Text value={s.cadence.planningHorizon} editing={editing} onChange={set(['cadence', 'planningHorizon'])} rows={1} /></div>
+              <div className="md:col-span-2"><p className={label}>Rationale</p><Text value={s.cadence.rationale} editing={editing} onChange={set(['cadence', 'rationale'])} /></div>
+            </div>
+            {s.cadence.isHypothesis && <p className="text-xs text-amber-500">Recommendation to test — not proven by performance data.</p>}
+          </Section>
+
+          <Section title="Initial roadmap">
+            <div className="space-y-3">
+              {s.roadmap.map((r, i) => (
+                <div key={i} className="rounded-2xl border border-border/50 p-4 grid grid-cols-1 md:grid-cols-[130px_1fr] gap-3">
+                  <div>
+                    {editing ? (
+                      <div className="space-y-1.5">
+                        <input
+                          value={r.timing}
+                          onChange={(e) => set(['roadmap', i, 'timing'])(e.target.value)}
+                          className={cn(field, 'text-xs py-1 px-2 font-semibold')}
+                          placeholder="Timing (e.g. Week 1)"
+                        />
+                        <select
+                          value={r.channel}
+                          onChange={(e) => set(['roadmap', i, 'channel'])(e.target.value)}
+                          className={cn(field, 'text-xs py-1 px-2')}
+                        >
+                          {s.channels.map((ch) => (
+                            <option key={ch.channel} value={ch.channel}>{ch.channel}</option>
+                          ))}
+                        </select>
+                        <p className="text-[11px] text-muted-foreground font-mono">{r.format}</p>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="font-semibold text-foreground">{r.timing}</p>
+                        <p className="text-xs text-muted-foreground">{r.channel} · {r.format}</p>
+                      </>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {editing ? <input value={r.topic} onChange={(e) => set(['roadmap', i, 'topic'])(e.target.value)} className={cn(field, 'font-medium')} placeholder="Topic / theme" />
+                      : <p className="font-medium text-foreground">{r.topic}</p>}
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Objective:</p>
+                      <Text value={r.objective} editing={editing} onChange={set(['roadmap', i, 'objective'])} rows={1} />
+                    </div>
+                    {editing ? (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Target audience:</p>
+                        <input
+                          value={r.audience}
+                          onChange={(e) => set(['roadmap', i, 'audience'])(e.target.value)}
+                          className={cn(field, 'text-xs py-1.5 px-3')}
+                          placeholder="Target audience for this post"
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Audience: {r.audience}</p>
+                    )}
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">How to evaluate:</p>
+                      <Text value={r.successEvaluation} editing={editing} onChange={set(['roadmap', i, 'successEvaluation'])} rows={1} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section title="Measurement plan">
+            <div className="space-y-3">
+              {s.measurement.map((m, i) => (
+                <div key={i} className="rounded-2xl border border-border/50 p-4 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    {editing ? (
+                      <input
+                        value={m.indicator}
+                        onChange={(e) => set(['measurement', i, 'indicator'])(e.target.value)}
+                        className={cn(field, 'font-medium py-1 px-3 max-w-xs')}
+                        placeholder="Indicator name"
+                      />
+                    ) : (
+                      <p className="font-medium text-foreground">{m.indicator}</p>
+                    )}
+                    {!editing && <GroundingBadge g={m.grounding} />}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">What to measure:</p>
+                    <Text value={m.whatToMeasure} editing={editing} onChange={set(['measurement', i, 'whatToMeasure'])} rows={1} />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Strategic purpose (why):</p>
+                    {editing ? (
+                      <Text value={m.why} editing={editing} onChange={set(['measurement', i, 'why'])} rows={1} />
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{m.why}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <p className="text-xs text-muted-foreground">No targets are set: there is no measured performance data yet.</p>
+            </div>
+          </Section>
+
+          </div>
+        )}
+      </div>
 
       <div className="glass-panel p-6 rounded-3xl space-y-2 border-amber-500/20">
         <h4 className="text-sm font-semibold tracking-widest uppercase text-amber-500">Evidence, assumptions & limitations</h4>

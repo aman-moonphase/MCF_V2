@@ -77,6 +77,104 @@ def _short(text: str, n: int = 140) -> str:
     return text if len(text) <= n else text[: n - 1].rsplit(" ", 1)[0] + "…"
 
 
+_DISCLAIMER_SENTENCE_RE = re.compile(
+    r"\b(?:"
+    r"this problem statement is based on|"
+    r"not a? validated customer[- ]research|"
+    r"not a customer quote|"
+    r"not a verbatim customer quote|"
+    r"(?:intended\s+)?(?:initial\s+)?(?:test\s+)?audience|"
+    r"intended audience selection|"
+    r"documented product requirement|"
+    r"internal (?:persona|research|test) (?:metadata|caveat|note)|"
+    r"no verified differentiator|"
+    r"leave differentiation unknown|"
+    r"avoid (?:claiming )?competitive superiority|"
+    r"avoid unsupported (?:financial )?claims|"
+    r"until competitor research|"
+    r"delivered in a [a-z]+ editorial tone"
+    r")\b",
+    re.I,
+)
+
+
+def normalize_persona(text: Optional[str]) -> str:
+    """Normalize audience persona for evaluation feedback and recommendations.
+
+    Strips:
+    - Metadata prefixes ('Primary:', 'Secondary:', 'Segment:', 'Role:', 'Persona:').
+    - Role wrappers like 'Decision-Maker (...)', 'Practitioner / End-User (...)'.
+    - Internal test instructions ('For this test, prioritize ...').
+    - Research disclaimers/caveats ('This is the intended initial test audience...').
+    """
+    if not text:
+        return ""
+    # Strip parenthetical caveats
+    text = re.sub(r"\s*\([^)]*(?:intended|not\s+a?\s*validated|customer[- ]research|test\s+audience|product\s+requirement)[^)]*\)", "", text, flags=re.I)
+    # Strip intra-sentence caveats e.g. "..., not a validated customer-research finding"
+    text = re.sub(r"[,;\-—:]\s*(?:this\s+is|not\s+a?\s*validated|intended|documented\s+product).*$", "", text, flags=re.I)
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    kept = []
+    for s in sentences:
+        if not _DISCLAIMER_SENTENCE_RE.search(s):
+            cleaned_s = re.sub(r"^(?:for this test,?\s*)?prioritize\s+", "", s, flags=re.I).strip()
+            if cleaned_s:
+                kept.append(cleaned_s)
+    candidate = kept[0] if kept else (sentences[0] if sentences else text)
+    candidate = re.split(r"\b(?:this\s+is\s+(?:the\s+)?(?:intended|our|a)|not\s+a?\s*validated|intended\s+audience|documented\s+product\s+requirement)\b", candidate, flags=re.I)[0].strip()
+
+    # Strip prefixes and wrappers
+    for _ in range(3):
+        candidate = re.sub(r"^(?:primary|secondary|tertiary|segment|role|persona|target\s*audience|audience):\s*", "", candidate, flags=re.I).strip()
+        m = re.match(r"^(?:decision-maker|practitioner(?:\s*/\s*end-user)?|daily user|team lead|budget-conscious evaluator)\s*\((.*?)\)$", candidate, re.I)
+        if m:
+            candidate = m.group(1).strip()
+        candidate = re.sub(r"^(?:for this test,?\s*)?prioritize\s+", "", candidate, flags=re.I).strip()
+        candidate = candidate.rstrip(". ,;—:-").strip()
+
+    candidate = " ".join(candidate.split())
+    if not candidate:
+        return ""
+    return candidate[:1].upper() + candidate[1:]
+
+
+def _clean_problem(text: Optional[str]) -> str:
+    if not text:
+        return ""
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    kept = [s for s in sentences if not _DISCLAIMER_SENTENCE_RE.search(s)]
+    return " ".join(kept) if kept else text
+
+
+def _clean_value(text: Optional[str]) -> str:
+    if not text:
+        return ""
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    kept = [s for s in sentences if not _DISCLAIMER_SENTENCE_RE.search(s)]
+    return " ".join(kept) if kept else text
+
+
+def _strip_disclaimers(text: Optional[str]) -> str:
+    """Strip research disclaimers, test instructions, and caveats from notes text."""
+    if not text:
+        return ""
+    text = re.sub(r"\s*\([^)]*(?:intended|not\s+a?\s*validated|customer[- ]research|test\s+audience|product\s+requirement)[^)]*\)", "", text, flags=re.I)
+    text = re.sub(r"[,;\-—:]\s*(?:this\s+is|not\s+a?\s*validated|intended|documented\s+product).*$", "", text, flags=re.I)
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    kept = []
+    for s in sentences:
+        if not _DISCLAIMER_SENTENCE_RE.search(s):
+            cleaned_s = re.sub(r"^(?:for this test,?\s*)?prioritize\s+", "", s, flags=re.I).strip()
+            if cleaned_s:
+                kept.append(cleaned_s)
+    res = " ".join(kept) if kept else (sentences[0] if sentences else text)
+    res = re.split(r"\b(?:this\s+is\s+(?:the\s+)?(?:intended|our|a)|not\s+a?\s*validated|intended\s+audience|documented\s+product\s+requirement)\b", res, flags=re.I)[0].strip()
+    res = re.sub(r"^(?:for this test,?\s*)?prioritize\s+", "", res, flags=re.I).strip()
+    # Strip primary / role / persona prefix if it's metadata, while keeping Segment label
+    res = re.sub(r"^(?:primary|role|persona|target\s*audience):\s*", "", res, flags=re.I).strip()
+    return " ".join(res.split()).strip().rstrip(" .")
+
+
 class RuleBasedEvaluator:
     name = NAME
     mode = MODE
@@ -151,21 +249,68 @@ class RuleBasedEvaluator:
                               "claims are not fact-checked."))
 
         # ── Audience & positioning ─────────────────────────────────────────
-        audience = ctx.strategy.get("primary_audience") or ctx.profile.get("target_audience") or ""
-        value = ctx.strategy.get("value_proposition") or ctx.profile.get("value_proposition") or ""
-        if audience and not _covers(audience.split(" who ")[0], post_stems, 0.5):
+        target_audience_raw = ctx.strategy.get("primary_audience") or ctx.profile.get("target_audience") or ""
+        audience_raw = ctx.audience_persona or target_audience_raw
+
+        has_research_caveat = bool(
+            _DISCLAIMER_SENTENCE_RE.search(target_audience_raw)
+            or _DISCLAIMER_SENTENCE_RE.search(ctx.audience_persona or "")
+        )
+
+        target_audience_clean = _strip_disclaimers(target_audience_raw)
+        persona_note_label = _strip_disclaimers(ctx.audience_persona or "")
+
+        # For evaluation feedback (recommendations & findings), fully normalize role prefixes and caveats
+        audience = normalize_persona(audience_raw)
+
+        raw_val = ctx.strategy.get("value_proposition") or ctx.profile.get("value_proposition") or ""
+        value = _clean_value(raw_val)
+
+        core_audience = audience.split(" who ")[0].strip().rstrip(".")
+        first_w = core_audience.split()[0] if core_audience else ""
+        if first_w.isupper() and len(first_w) <= 4:
+            audience_inline = core_audience
+        else:
+            audience_inline = (core_audience[:1].lower() + core_audience[1:]) if core_audience else "your audience"
+
+        if audience and not _covers(core_audience, post_stems, 0.5):
             found["audience_positioning"].append(_finding(
-                "recommendation", "medium", f"The post does not clearly address the approved audience: \"{_short(audience, 90)}\".",
-                f"Speak to {audience.split(' who ')[0].strip().rstrip('.').lower()} directly, ideally in the hook."))
-        elif audience and not _covers(audience.split(" who ")[0], stems(opening), 0.5):
+                "recommendation", "medium",
+                f"The post does not clearly address the target persona: \"{audience}\".",
+                f"Speak to {audience_inline} directly, ideally in the hook."
+            ))
+        elif audience and not _covers(core_audience, stems(opening), 0.5):
             found["audience_positioning"].append(_finding(
-                "recommendation", "low", "The audience is named in the post but not in its opening.",
-                "Mention the audience in the hook or first line so the right readers stop scrolling."))
+                "recommendation", "low",
+                f"The target persona (\"{audience}\") is named in the post but not in its opening.",
+                f"Mention {audience_inline} in the hook or first line so the right readers stop scrolling."
+            ))
+
         if value and not _covers(value, post_stems, 0.5):
             found["audience_positioning"].append(_finding(
-                "recommendation", "medium", f"The approved value proposition is not clearly stated: \"{_short(value, 120)}\".",
-                "Add one line that states this benefit in your own words."))
-        notes["audience_positioning"] = f"Approved audience: \"{_short(audience, 80)}\"." if audience else "No approved audience."
+                "recommendation", "medium",
+                f"The approved value proposition is not clearly stated: \"{_short(value, 120)}\".",
+                "Add one line that states this benefit in your own words."
+            ))
+
+        aud_note_parts = []
+        if target_audience_clean:
+            aud_note_parts.append(f"Approved audience: \"{_short(target_audience_clean, 80)}\".")
+        else:
+            aud_note_parts.append("No approved audience.")
+
+        if persona_note_label:
+            aud_note_parts.append(f"Persona: \"{_short(persona_note_label, 60)}\".")
+
+        if ctx.editorial_tone:
+            aud_note_parts.append(f"Tone: {ctx.editorial_tone.capitalize()}.")
+
+        if has_research_caveat:
+            aud_note_parts.append("Audience grounding: Documented product requirement (intended test audience; not validated customer research).")
+        elif target_audience_clean:
+            aud_note_parts.append("Audience grounding: Approved profile audience.")
+
+        notes["audience_positioning"] = " ".join(aud_note_parts)
 
         # ── Readability ────────────────────────────────────────────────────
         body = post.get("body", "")
@@ -261,13 +406,17 @@ class RuleBasedEvaluator:
     def _pillar_suggestion(kind: str, ctx: EvaluationContext) -> str:
         p = ctx.profile
         if kind == "problem" and p.get("problem_solved"):
-            return f"Open with the problem in your audience's terms, from the approved profile: \"{_short(p['problem_solved'], 160)}\"."
+            clean_prob = _clean_problem(p["problem_solved"])
+            return f"Open with the problem in your audience's terms, from the approved profile: \"{_short(clean_prob, 160)}\"."
         if kind == "value" and p.get("value_proposition"):
-            return f"Make the benefit explicit: \"{p['value_proposition']}\"."
+            clean_val = _clean_value(p["value_proposition"])
+            return f"Make the benefit explicit: \"{_short(clean_val, 160)}\"."
         if kind == "features" and p.get("key_features"):
             return "Explain at least two approved features: " + ", ".join(p["key_features"][:3]) + "."
         if kind == "differentiator" and p.get("differentiators"):
-            return f"Lead with the differentiator: \"{_short(p['differentiators'][0], 140)}\"."
+            valid_diffs = [d for d in p["differentiators"] if not _DISCLAIMER_SENTENCE_RE.search(d)]
+            diff_text = valid_diffs[0] if valid_diffs else p["differentiators"][0]
+            return f"Lead with the differentiator: \"{_short(diff_text, 140)}\"."
         relation = (ctx.pillar or {}).get("relation_to_product") or ""
         return f"Connect the post to what this pillar is about: \"{_short(relation, 140)}\"." if relation else \
             "Connect the post to the selected pillar."

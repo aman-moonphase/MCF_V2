@@ -20,11 +20,12 @@ _STOP = {"with", "from", "that", "this", "your", "their", "into", "about", "have
          "less", "listed", "profile", "approved", "product", "show", "shows", "their", "every", "each", "like"}
 _STEM = 5
 
-# Problem framing in the opening: a pain, a burden, or a question about it.
+# Problem framing in the opening: a pain, a burden, a documented need, a challenge, or a question about it.
 _PROBLEM_CUE = re.compile(
     r"\b(?:instead of|how much (?:time|of your)|how many hours|spend(?:ing)? (?:hours|too much)|los(?:e|ing) (?:time|hours)|"
     r"struggl\w*|juggl\w*|wast\w*|chasing|hassle|burden\w*|frustrat\w*|stress\w*|tired of|by hand|manual\w*|"
-    r"no one else|fall(?:s|ing)? behind|slip(?:s|ping)?|overwhelm\w*|scatter\w*|pain\w*)\b", re.I)
+    r"no one else|fall(?:s|ing)? behind|slip(?:s|ping)?|overwhelm\w*|scatter\w*|pain\w*|"
+    r"need\w*|problem\w*|challeng\w*|hurdle\w*|solv\w*)\b", re.I)
 
 
 def _clean(text: Optional[str]) -> str:

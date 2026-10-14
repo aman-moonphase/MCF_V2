@@ -342,6 +342,156 @@ class CompetitorService:
         self._touch(product)
         await self.db.commit()
 
+    async def search_signals_for_competitor(
+        self, product_id: UUID, competitor_id: UUID, custom_query: Optional[str] = None
+    ) -> Dict[str, Any]:
+        product = await self.approved_product(product_id)
+        competitor = await self.get_competitor(product, competitor_id)
+
+        query = (custom_query or "").strip()
+        if not query:
+            name = competitor.name.strip()
+            category = (product.profile or {}).get("category") or ""
+            if category and category.lower() not in name.lower():
+                query = f'"{name}" {category[:50]}'
+            else:
+                query = f'"{name}"'
+
+        from app.services.gdelt_provider import GDELTProvider
+
+        provider = GDELTProvider()
+        return await provider.search_articles(
+            query=query,
+            max_records=10,
+            allow_private_urls=settings.ALLOW_PRIVATE_URL_INGESTION,
+        )
+
+    async def ingest_signal_evidence(
+        self, product_id: UUID, competitor_id: UUID, data: Dict[str, Any]
+    ) -> CompetitorEvidence:
+        product = await self.approved_product(product_id)
+        competitor = await self.get_competitor(product, competitor_id)
+
+        raw_url = (data.get("source_url") or "").strip()
+        try:
+            url = validate_public_url(raw_url, allow_private=settings.ALLOW_PRIVATE_URL_INGESTION)
+        except UnsafeURLError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        title = (data.get("title") or "Market Signal").strip()
+        domain = (data.get("domain") or "").strip()
+        published = (data.get("published_at") or "").strip()
+        matching_query = (data.get("matching_query") or "").strip()
+        limitations = (data.get("limitations") or "").strip()
+
+        evidence = CompetitorEvidence(
+            competitor_id=competitor.id,
+            product_id=product.id,
+            evidence_type="market_signal",
+            source_url=url[:1024],
+            title=f"Signal: {title[:200]}",
+            status="completed",
+        )
+
+        content_parts = [
+            "[Market Signal from GDELT]",
+            f"Source Domain: {domain or 'News'}",
+            f"Article Title: {title}",
+            f"Article URL: {url}",
+        ]
+        if published:
+            content_parts.append(f"Publication Date: {published}")
+        if matching_query:
+            content_parts.append(f"Search Query: {matching_query}")
+        if limitations:
+            content_parts.append(f"Evidence Note: {limitations}")
+        else:
+            content_parts.append("Evidence Note: Single media mention; not verified as an industry trend.")
+
+        evidence.content = "\n".join(content_parts)
+
+        self.db.add(evidence)
+        self._touch(product)
+        await self.db.commit()
+        return evidence
+
+    async def search_ugc_for_competitor(
+        self, product_id: UUID, competitor_id: UUID, custom_query: Optional[str] = None
+    ) -> Dict[str, Any]:
+        product = await self.approved_product(product_id)
+        competitor = await self.get_competitor(product, competitor_id)
+
+        query = (custom_query or "").strip()
+        if not query:
+            name = competitor.name.strip()
+            category = (product.profile or {}).get("category") or ""
+            if category and category.lower() not in name.lower():
+                query = f'"{name}" {category[:50]}'
+            else:
+                query = f'"{name}" review OR alternative'
+
+        from app.services.reddit_provider import RedditUGCProvider
+
+        provider = RedditUGCProvider(timeout_seconds=settings.REDDIT_TIMEOUT_SECONDS)
+        return await provider.search_posts(
+            query=query,
+            max_results=10,
+            allow_private_urls=settings.ALLOW_PRIVATE_URL_INGESTION,
+        )
+
+    async def ingest_ugc_evidence(
+        self, product_id: UUID, competitor_id: UUID, data: Dict[str, Any]
+    ) -> CompetitorEvidence:
+        product = await self.approved_product(product_id)
+        competitor = await self.get_competitor(product, competitor_id)
+
+        raw_url = (data.get("source_url") or "").strip()
+        try:
+            url = validate_public_url(raw_url, allow_private=settings.ALLOW_PRIVATE_URL_INGESTION)
+        except UnsafeURLError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        title = (data.get("title") or "Reddit Discussion").strip()
+        subreddit = (data.get("subreddit") or "r/reddit").strip()
+        published = (data.get("published_at") or "").strip()
+        matching_query = (data.get("matching_query") or "").strip()
+        excerpt = (data.get("excerpt") or "").strip()
+        score = int(data.get("score") or 0)
+        num_comments = int(data.get("num_comments") or 0)
+
+        evidence = CompetitorEvidence(
+            competitor_id=competitor.id,
+            product_id=product.id,
+            evidence_type="ugc",
+            source_url=url[:1024],
+            title=f"UGC ({subreddit}): {title[:200]}",
+            status="completed",
+        )
+
+        content_parts = [
+            f"[User Generated Content ({subreddit})]",
+            f"Discussion Title: {title}",
+            f"Post URL: {url}",
+            f"Community Engagement: {score} upvotes, {num_comments} comments",
+        ]
+        if published:
+            content_parts.append(f"Publication Date: {published}")
+        if matching_query:
+            content_parts.append(f"Search Query: {matching_query}")
+        if excerpt:
+            content_parts.append(f"\nUser Comments / Excerpt:\n{excerpt}")
+        content_parts.append(
+            "\nNote: Reddit discussions reflect subjective user feedback and anecdotal experiences. "
+            "Treated as unverified customer hypotheses."
+        )
+
+        evidence.content = "\n".join(content_parts)
+
+        self.db.add(evidence)
+        self._touch(product)
+        await self.db.commit()
+        return evidence
+
     # ─── Analysis ──────────────────────────────────────────────────────────
 
     def _items(self, competitor: Competitor, evidence: List[CompetitorEvidence]) -> List[dict]:

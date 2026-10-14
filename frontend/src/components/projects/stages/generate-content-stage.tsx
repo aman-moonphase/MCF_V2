@@ -152,19 +152,13 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
     if (snap) {
       setPillarIndex(snap.pillarIndex ?? 0);
       setInstructions(snap.instructions ?? '');
-      if (snap.audiencePersona) {
-        setSelectedPersona(snap.audiencePersona);
-      } else if (ctx?.selectedPersona) {
-        setSelectedPersona(ctx.selectedPersona);
-      } else if (ctx?.availablePersonas?.[0]) {
-        setSelectedPersona(ctx.availablePersonas[0]);
-      }
+      // When a draft exists, the selector reflects stage preferences for the NEXT generation
+      // if saved, otherwise falls back to the draft's snapshot or default.
+      const toneChoice = ctx?.selectedTone || snap.editorialTone || 'professional';
+      setSelectedTone(toneChoice);
 
-      if (snap.editorialTone) {
-        setSelectedTone(snap.editorialTone);
-      } else if (ctx?.selectedTone) {
-        setSelectedTone(ctx.selectedTone);
-      }
+      const personaChoice = ctx?.selectedPersona || snap.audiencePersona || ctx?.availablePersonas?.[0] || '';
+      setSelectedPersona(personaChoice);
     } else if (ctx) {
       if (ctx.selectedPersona) {
         setSelectedPersona(ctx.selectedPersona);
@@ -179,12 +173,24 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
 
   const handlePersonaChange = (val: string) => {
     setSelectedPersona(val);
-    GenerationService.savePreferences(project.id, { audiencePersona: val }).catch(() => {});
+    GenerationService.savePreferences(project.id, { audiencePersona: val })
+      .then((updated) => {
+        if (updated?.context) {
+          setState((prev) => (prev ? { ...prev, context: updated.context } : prev));
+        }
+      })
+      .catch(() => {});
   };
 
   const handleToneChange = (val: string) => {
     setSelectedTone(val);
-    GenerationService.savePreferences(project.id, { editorialTone: val }).catch(() => {});
+    GenerationService.savePreferences(project.id, { editorialTone: val })
+      .then((updated) => {
+        if (updated?.context) {
+          setState((prev) => (prev ? { ...prev, context: updated.context } : prev));
+        }
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -329,6 +335,13 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
     ? ctx.availableTones
     : ['professional', 'conversational', 'educational', 'bold'];
 
+  const draftTone = draft?.contextSnapshot?.editorialTone;
+  const draftPersona = draft?.contextSnapshot?.audiencePersona;
+  const toneUsedForContext = draft ? (draftTone || 'professional') : selectedTone;
+  const personaUsedForContext = draft ? (draftPersona || ctx?.availablePersonas?.[0] || 'Primary Target Audience') : selectedPersona;
+  const toneDiffers = Boolean(draft && draftTone && selectedTone && draftTone.toLowerCase() !== selectedTone.toLowerCase());
+  const personaDiffers = Boolean(draft && draftPersona && selectedPersona && draftPersona !== selectedPersona);
+
   const controls = (
     <Panel title="Generate">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -340,7 +353,14 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
           {ctx?.pillars[pillarIndex] && <p className="text-xs text-muted-foreground">{ctx.pillars[pillarIndex].purpose}</p>}
         </div>
         <div className="space-y-1.5">
-          <p className={label}>Audience persona</p>
+          <div className="flex items-center justify-between">
+            <p className={label}>Audience persona</p>
+            {personaDiffers && (
+              <span className="text-[10px] text-muted-foreground font-medium">
+                Draft persona differs
+              </span>
+            )}
+          </div>
           <select
             value={selectedPersona}
             onChange={(e) => handlePersonaChange(e.target.value)}
@@ -354,7 +374,14 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
           <p className="text-xs text-muted-foreground">Tailors hook, perspective, and framing to this persona</p>
         </div>
         <div className="space-y-1.5">
-          <p className={label}>Editorial tone</p>
+          <div className="flex items-center justify-between">
+            <p className={label}>Editorial tone</p>
+            {toneDiffers && draftTone && (
+              <span className="text-[10px] text-muted-foreground font-medium">
+                Current draft: {draftTone.charAt(0).toUpperCase() + draftTone.slice(1)}
+              </span>
+            )}
+          </div>
           <select
             value={selectedTone}
             onChange={(e) => handleToneChange(e.target.value)}
@@ -365,7 +392,11 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
               <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
             ))}
           </select>
-          <p className="text-xs text-muted-foreground">{toneHelper[selectedTone] || 'Editorial voice for the post'}</p>
+          <p className="text-xs text-muted-foreground">
+            {toneDiffers && draftTone
+              ? `Next generation will use ${selectedTone.charAt(0).toUpperCase() + selectedTone.slice(1)}. Existing draft remains in ${draftTone.charAt(0).toUpperCase() + draftTone.slice(1)} until you regenerate.`
+              : toneHelper[selectedTone] || 'Editorial voice for the post'}
+          </p>
         </div>
         <div className="space-y-1.5">
           <p className={label}>Campaign instructions (optional)</p>
@@ -461,8 +492,32 @@ export function GenerateContentStage({ project, activeStage, onComplete, onRefre
             <Fact name="Messaging direction" value={ctx.messagingDirection} />
             <Fact name="Key features" value={ctx.keyFeatures} />
             <Fact name="Differentiators" value={ctx.differentiators} />
-            {selectedPersona && <Fact name="Target persona" value={selectedPersona} />}
-            {selectedTone && <Fact name="Editorial tone" value={selectedTone.charAt(0).toUpperCase() + selectedTone.slice(1)} />}
+            {personaUsedForContext && (
+              <div>
+                <p className={label}>Target persona</p>
+                <p className="text-sm text-foreground/90">{personaUsedForContext}</p>
+                {personaDiffers && (
+                  <p className="text-[11px] text-amber-500 mt-0.5">
+                    Selector set to &ldquo;{selectedPersona}&rdquo; for next generation
+                  </p>
+                )}
+              </div>
+            )}
+            {toneUsedForContext && (
+              <div>
+                <p className={label}>Editorial tone</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm text-foreground/90">
+                    {toneUsedForContext.charAt(0).toUpperCase() + toneUsedForContext.slice(1)}
+                  </p>
+                  {toneDiffers && (
+                    <span className="text-[11px] text-amber-500 font-medium">
+                      (selector changed to {selectedTone.charAt(0).toUpperCase() + selectedTone.slice(1)} for next generation)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
             <span>Content type: {ctx.approvedType || '—'}</span>

@@ -274,3 +274,256 @@ async def test_projects_outside_the_product_workflow_are_unchanged(authenticated
     ok = await authenticated_client.patch(f"/api/projects/{project_id}/stages/content-type",
                                           json={"status": "Completed", "data": {"approved_type": "Carousel"}})
     assert ok.status_code == 200 and "overrides_strategy" not in ok.json()["data"]
+
+
+@pytest.mark.asyncio
+async def test_remove_channel_preserves_linkedin_and_bumps_version(authenticated_client):
+    project_id, product_id = await make_product(authenticated_client)
+    await approve_competitors(authenticated_client, project_id, product_id)
+    s = await generate(authenticated_client, product_id)
+    initial_version = s["version"]
+    initial_channels = s["strategy"]["channels"]
+
+    # Initial strategy has channels (e.g., LinkedIn and others)
+    assert any(c["channel"] == "LinkedIn" for c in initial_channels)
+    linkedin_only = [c for c in initial_channels if c["channel"] == "LinkedIn"]
+    assert len(linkedin_only) >= 1
+
+    # Attempting to remove all channels should fail validation with 422
+    empty_res = await authenticated_client.patch(url(product_id), json={"strategy": {"channels": []}})
+    assert empty_res.status_code == 422
+    assert "At least one channel must remain" in empty_res.json()["detail"]
+
+    # Remove non-LinkedIn channel(s) and retain LinkedIn as the only active channel
+    res = await authenticated_client.patch(url(product_id), json={"strategy": {"channels": linkedin_only}})
+    assert res.status_code == 200
+    updated = res.json()
+
+    # Verify version was incremented, status became draft, and channels has only LinkedIn
+    assert updated["version"] == initial_version + 1
+    assert updated["status"] == "draft"
+    assert "channels" in updated["edited_sections"]
+    active_channels = updated["strategy"]["channels"]
+    assert len(active_channels) == 1
+    assert active_channels[0]["channel"] == "LinkedIn"
+
+    # Approving the new version succeeds
+    app_res = await approve(authenticated_client, project_id, product_id, updated["version"])
+    assert app_res.status_code == 200
+    assert app_res.json()["status"] == "approved"
+    assert app_res.json()["approved_version"] == updated["version"]
+
+
+# ─── Consolidated Strategy Audit, Normalization & Downstream Tests ──────────
+
+@pytest.mark.asyncio
+async def test_strategy_generation_audience_normalization_and_caveat_retention(authenticated_client):
+    """Verify that when target_audience contains role prefixes and research caveats:
+    1. primary_audience is normalized without 'Primary:' or research disclaimers.
+    2. Roadmap items have clean, normalized audience strings (disclaimer is not repeated across roadmap cards).
+    3. The research caveat is preserved in limitations as a clear audience grounding disclosure.
+    4. Audience grounding confidence is honestly capped at medium.
+    """
+    caveat_text = (
+        "Primary: College students managing limited budgets — "
+        "this is the intended initial test audience, not a validated customer-research finding"
+    )
+    res = await authenticated_client.post("/api/projects", json={
+        "title": "CampusCash launch",
+        "source_type": "Text Idea",
+        "source_reference": "CampusCash",
+    })
+    project_id = res.json()["id"]
+    source = (
+        "Product: CampusCash - budgeting tool. "
+        f"Target users: {caveat_text}. "
+        "Features: expense tracking, allowance categorization, monthly limits. "
+        "Value proposition: simple budgeting for student life."
+    )
+    await authenticated_client.post(f"/api/projects/{project_id}/sources/ingest", data={"source_type": "text", "content": source})
+    product = (await authenticated_client.post(f"/api/projects/{project_id}/product-understanding")).json()
+    await authenticated_client.post(f"/api/products/{product['id']}/approve", json={"project_id": project_id, "profile_version": product["profile_version"]})
+    await approve_competitors(authenticated_client, project_id, product["id"], with_evidence=False)
+
+    s = await generate(authenticated_client, product["id"])
+    strat = s["strategy"]
+
+    # 1. Primary audience is clean
+    aud = strat["audience"]["primary_audience"]
+    assert "Primary:" not in aud
+    assert "not a validated customer-research finding" not in aud
+    assert "intended initial test audience" not in aud
+    assert aud == "College students managing limited budgets"
+
+    # 2. Roadmap items have clean audience without disclaimer repetitions
+    for item in strat["roadmap"]:
+        assert "Primary:" not in item["audience"]
+        assert "not a validated customer-research finding" not in item["audience"]
+        assert item["audience"] == "College students managing limited budgets"
+
+    # 3. Limitations contain the audience grounding disclosure
+    assert any("intended initial test audience" in lim and "not a validated customer-research finding" in lim
+               for lim in strat["limitations"])
+
+    # 4. Confidence is capped honestly
+    assert strat["audience"]["grounding"]["confidence"] in ("medium", "low")
+
+
+@pytest.mark.asyncio
+async def test_strategy_edit_persistence_version_history_and_reapproval_safety(authenticated_client):
+    """Verify that editing strategy fields:
+    1. Bumps version and revokes approval (status becomes draft, approved_version retains prior version).
+    2. Preserves exact edited fields across API retrieval, refresh, and project reopening.
+    3. Preserves all unchanged fields without corruption.
+    4. Invalid input (e.g. unknown sections, invalid content type, empty channels) is rejected with 422
+       and does not destroy existing data.
+    5. Re-approval succeeds only when reviewing the latest version.
+    """
+    project_id, product_id = await make_product(authenticated_client)
+    await approve_competitors(authenticated_client, project_id, product_id)
+    s = await generate(authenticated_client, product_id)
+    v1 = s["version"]
+
+    # Approve v1
+    app_v1 = await approve(authenticated_client, project_id, product_id, v1)
+    assert app_v1.status_code == 200
+    assert app_v1.json()["status"] == "approved"
+    assert app_v1.json()["approved_version"] == v1
+
+    # Edit multiple sections: audience, roadmap, measurement
+    orig_strat = s["strategy"]
+    new_messaging = "Lead with automated tax categorization to save hours each quarter."
+    new_topic = "Quarterly Tax Filing Without Stress"
+    new_indicator = "Invoicing Time"
+
+    edited_audience = {**orig_strat["audience"], "messaging_direction": new_messaging}
+    edited_roadmap = [dict(item) for item in orig_strat["roadmap"]]
+    edited_roadmap[0]["topic"] = new_topic
+    edited_measurement = [dict(item) for item in orig_strat["measurement"]]
+    edited_measurement[0]["indicator"] = new_indicator
+
+    patch_res = await authenticated_client.patch(url(product_id), json={
+        "strategy": {
+            "audience": edited_audience,
+            "roadmap": edited_roadmap,
+            "measurement": edited_measurement,
+        }
+    })
+    assert patch_res.status_code == 200
+    v2_state = patch_res.json()
+
+    # 1. Version incremented, status is draft, prior approved_version preserved
+    assert v2_state["version"] == v1 + 1
+    assert v2_state["status"] == "draft"
+    assert v2_state["approved_version"] == v1
+    assert set(v2_state["edited_sections"]) == {"audience", "roadmap", "measurement"}
+
+    # 2. Re-retrieve through GET /api/products/{id}/promotion-strategy (simulating refresh / reopen)
+    get_res = await authenticated_client.get(url(product_id))
+    assert get_res.status_code == 200
+    refreshed = get_res.json()
+    assert refreshed["version"] == v1 + 1
+    assert refreshed["status"] == "draft"
+    assert refreshed["approved_version"] == v1
+
+    # 3. Confirm edited fields match exactly
+    assert refreshed["strategy"]["audience"]["messaging_direction"] == new_messaging
+    assert refreshed["strategy"]["roadmap"][0]["topic"] == new_topic
+    assert refreshed["strategy"]["measurement"][0]["indicator"] == new_indicator
+
+    # 4. Confirm unchanged fields remain completely intact
+    assert refreshed["strategy"]["audience"]["value_proposition"] == orig_strat["audience"]["value_proposition"]
+    assert refreshed["strategy"]["content_pillars"] == orig_strat["content_pillars"]
+    assert refreshed["strategy"]["cadence"] == orig_strat["cadence"]
+
+    # 5. Invalid save does not corrupt or destroy existing data
+    bad_res = await authenticated_client.patch(url(product_id), json={
+        "strategy": {"content_direction": {**orig_strat["content_direction"], "primary_content_type": "InvalidFormat"}}
+    })
+    assert bad_res.status_code == 422
+
+    # Verify existing data is unchanged after failed save
+    check_res = await authenticated_client.get(url(product_id))
+    assert check_res.json()["version"] == v1 + 1
+    assert check_res.json()["strategy"]["audience"]["messaging_direction"] == new_messaging
+
+    # 6. Approving an outdated version fails with 409
+    assert (await approve(authenticated_client, project_id, product_id, v1)).status_code == 409
+
+    # Approving current version v2 succeeds
+    app_v2 = await approve(authenticated_client, project_id, product_id, v1 + 1)
+    assert app_v2.status_code == 200
+    assert app_v2.json()["status"] == "approved"
+    assert app_v2.json()["approved_version"] == v1 + 1
+
+
+@pytest.mark.asyncio
+async def test_downstream_generation_strategy_consistency_and_staleness_gating(authenticated_client):
+    """Verify downstream content generation integration with promotion strategy:
+    1. Content generates using approved strategy context (contains approved pillar and messaging direction).
+    2. Context snapshot records strategy_id and strategy_version.
+    3. Editing the strategy revokes approval and prevents generation from using the unapproved draft.
+    4. When re-approved, Content Type stage must be re-approved for the new strategy version before generation proceeds.
+    5. Content generated after re-approval updates snapshot to new strategy version.
+    """
+    from tests.test_generate_content import gen_url
+
+    project_id, product_id = await make_product(authenticated_client)
+    await approve_competitors(authenticated_client, project_id, product_id)
+    s = await generate(authenticated_client, product_id)
+    v1 = s["version"]
+
+    # Approve strategy v1
+    assert (await approve(authenticated_client, project_id, product_id, v1)).status_code == 200
+
+    # Approve content type for v1
+    ct_stage = f"/api/projects/{project_id}/stages/content-type"
+    ct_res = await authenticated_client.patch(ct_stage, json={"status": "Completed", "data": {"approved_type": "Social Post"}})
+    assert ct_res.status_code == 200
+
+    # Generate content for v1
+    gen1 = await authenticated_client.post(gen_url(project_id), json={"pillar_index": 0})
+    assert gen1.status_code == 200
+    st1 = gen1.json()
+    assert st1["draft"]["context_snapshot"]["strategy_version"] == v1
+    assert st1["draft"]["context_snapshot"]["strategy_id"] == str(s["product_id"]) or st1["draft"]["context_snapshot"]["product_id"] == str(product_id)
+    assert st1["stale"] is False
+
+    # Now edit the strategy (bumps to v2, revokes approval -> draft)
+    new_dir = "Focus directly on solo designers needing fast GST filing."
+    patch_res = await authenticated_client.patch(url(product_id), json={
+        "strategy": {"audience": {**s["strategy"]["audience"], "messaging_direction": new_dir}}
+    })
+    assert patch_res.status_code == 200
+    v2 = patch_res.json()["version"]
+    assert v2 == v1 + 1
+
+    # Check generated content state: existing post is now flagged as stale
+    get_gen = await authenticated_client.get(gen_url(project_id))
+    assert get_gen.status_code == 200
+    assert get_gen.json()["stale"] is True
+    assert any("Promotion Strategy changed" in r for r in get_gen.json()["stale_reasons"])
+
+    # Attempting to regenerate while strategy is draft is blocked
+    regen_blocked = await authenticated_client.post(gen_url(project_id), json={"pillar_index": 0})
+    assert regen_blocked.status_code == 409
+    assert "Approve the Promotion Strategy first" in regen_blocked.json()["detail"]
+
+    # Approve strategy v2
+    assert (await approve(authenticated_client, project_id, product_id, v2)).status_code == 200
+
+    # Content Type stage was approved for v1; generation must require re-approving Content Type for v2
+    regen_ct_blocked = await authenticated_client.post(gen_url(project_id), json={"pillar_index": 0})
+    assert regen_ct_blocked.status_code == 409
+    assert "Promotion Strategy changed after the Content Type was approved" in regen_ct_blocked.json()["detail"]
+
+    # Re-approve Content Type for v2
+    reapp_ct = await authenticated_client.patch(ct_stage, json={"status": "Completed", "data": {"approved_type": "Social Post"}})
+    assert reapp_ct.status_code == 200
+
+    # Now generation succeeds and records v2
+    gen2 = await authenticated_client.post(gen_url(project_id), json={"pillar_index": 0})
+    assert gen2.status_code == 200
+    st2 = gen2.json()
+    assert st2["draft"]["context_snapshot"]["strategy_version"] == v2
+    assert st2["stale"] is False

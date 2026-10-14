@@ -2,11 +2,12 @@
 
 import React from 'react';
 import { WorkflowStage, Project } from '@/types/project';
-import { Bot, FileText, ArrowRight } from 'lucide-react';
+import { Bot, FileText, ArrowRight, ExternalLink } from 'lucide-react';
 import { hasDedicatedStageUI, stageComponentFor } from './stage-registry';
 import { getStageLabel } from '@/lib/workflow-stages';
 import { AiModeIndicator } from '@/components/ai-mode-indicator';
 import { ScheduleDialog } from '@/components/schedule-dialog';
+import { SourceInspectionDialog } from './source-inspection-dialog';
 import { Calendar } from 'lucide-react';
 import { ProductWorkflowState } from '@/lib/services/workflow-orchestration.service';
 import { OrchestrationPanel } from './orchestration-panel';
@@ -40,6 +41,7 @@ export function WorkspaceContent({
   onOrchestrationRefresh,
 }: WorkspaceContentProps) {
   const [isScheduleOpen, setIsScheduleOpen] = React.useState(false);
+  const [isSourceInspectOpen, setIsSourceInspectOpen] = React.useState(false);
   const [isAdvancing, setIsAdvancing] = React.useState(false);
 
   const handleAdvance = async () => {
@@ -139,12 +141,32 @@ export function WorkspaceContent({
                   <div className="text-[11px] text-muted-foreground mt-0.5">{factVerificationSubtext}</div>
                 </div>
 
-                <div className="bg-white dark:bg-card p-4 rounded-xl border border-border/50 shadow-sm">
-                  <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Source Reference</div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setIsSourceInspectOpen(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setIsSourceInspectOpen(true);
+                    }
+                  }}
+                  className="bg-white dark:bg-card p-4 rounded-xl border border-border/50 shadow-sm cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all group focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  title="Click to inspect ingested source content and provenance"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold text-primary uppercase tracking-wider">Source Reference</span>
+                    <span className="text-[10px] text-primary font-medium flex items-center gap-0.5 opacity-80 group-hover:opacity-100 transition-opacity">
+                      Inspect <ExternalLink className="w-3 h-3 ml-0.5" />
+                    </span>
+                  </div>
                   <div className="font-medium text-foreground truncate" title={project.sourceReference}>
                     {project.sourceReference.length > 50 ? `${project.sourceReference.substring(0, 47)}...` : project.sourceReference}
                   </div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">{project.sourceType || 'Text Idea'}</div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center justify-between">
+                    <span>{project.sourceType || 'Text Idea'}</span>
+                    <span className="text-[10px] text-primary/70 group-hover:text-primary transition-colors">Click to view source &rarr;</span>
+                  </div>
                 </div>
               </div>
 
@@ -258,6 +280,15 @@ export function WorkspaceContent({
         onScheduled={() => {
           // Additional logic could go here, for now it will just show a toast in the dialog
         }}
+      />
+
+      <SourceInspectionDialog
+        projectId={project.id}
+        projectTitle={project.title}
+        sourceReference={project.sourceReference}
+        sourceType={project.sourceType}
+        isOpen={isSourceInspectOpen}
+        onClose={() => setIsSourceInspectOpen(false)}
       />
     </div>
   );
