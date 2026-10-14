@@ -68,16 +68,36 @@ def get_audience_personas(profile: dict, strategy_audience: Optional[str] = None
             "Budget-Conscious Evaluator",
         ]
 
-    cleaned_aud = raw_aud.split(" who ")[0].rstrip(".").strip()
+    from app.ai.providers.demo_generation import _sanitize_public_text
+    sanitized = _sanitize_public_text(raw_aud) or raw_aud
+    sanitized = re.sub(r"^(?:for this test,?\s*)?prioritize\s+", "", sanitized, flags=re.I).strip()
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", sanitized) if s.strip()]
+    first_sentence = sentences[0].rstrip(".").strip() if sentences else sanitized
+    cleaned_aud = first_sentence.split(" who ")[0].rstrip(".").strip()
+    if cleaned_aud:
+        cleaned_aud = cleaned_aud[0].upper() + cleaned_aud[1:]
+
     personas: List[str] = [f"Primary: {cleaned_aud}"]
 
-    # Extract distinct sub-segments if joined by comma, " and ", " or "
+    # Extract distinct sub-segments
+    sub_segments: List[str] = []
+    if len(sentences) > 1:
+        other_text = " ".join(sentences[1:])
+        other_match = re.search(r"(?:other target segments? include|target segments? include|including)\s+([^.]+)", other_text, re.I)
+        if other_match:
+            sub_segments.extend([p.strip() for p in re.split(r",|\band\b|\bor\b", other_match.group(1)) if p.strip()])
+
     parts = [p.strip() for p in re.split(r",|\band\b|\bor\b", cleaned_aud) if p.strip()]
     if len(parts) > 1:
-        for p in parts[:3]:
-            seg = p[0].upper() + p[1:] if len(p) > 1 else p.upper()
-            seg_label = f"Segment: {seg}"
-            if seg_label not in personas and len(seg) > 3:
+        sub_segments.extend(parts)
+
+    for seg in sub_segments:
+        seg_clean = re.sub(r"^(?:and|or|other)\s+", "", seg, flags=re.I).strip()
+        if len(seg_clean) > 3 and not re.search(r"\b(test|intended|finding|quote|brief)\b", seg_clean, re.I):
+            seg_formatted = seg_clean[0].upper() + seg_clean[1:]
+            seg_label = f"Segment: {seg_formatted}"
+            if seg_label not in personas and seg_clean.lower() != cleaned_aud.lower():
                 personas.append(seg_label)
 
     personas.append(f"Decision-Maker ({cleaned_aud})")
@@ -445,6 +465,17 @@ class GenerationService:
         if existing and existing.status == "approved":
             raise HTTPException(status_code=409, detail="This post has been approved. It cannot be regenerated or overwritten.")
 
+        stage = stages.get(STAGE_KEY)
+        stage_data = (stage.data or {}) if stage else {}
+        if editorial_tone is None and stage_data.get("editorial_tone"):
+            editorial_tone = stage_data.get("editorial_tone")
+        if audience_persona is None and stage_data.get("audience_persona"):
+            candidate_persona = stage_data.get("audience_persona")
+            current_audience = (strategy.strategy.get("audience") or {}).get("primary_audience")
+            available = get_audience_personas(product.profile or {}, current_audience)
+            if candidate_persona in available:
+                audience_persona = candidate_persona
+
         state, snapshot = await self._build_state(
             project, product, strategy, pillar_index, instructions,
             audience_persona=audience_persona, editorial_tone=editorial_tone,
@@ -703,6 +734,11 @@ class GenerationService:
                 .order_by(ContentImage.updated_at.desc().nullslast(), ContentImage.created_at.desc())
             )
             current_image = img_res.scalars().first()
+            snap_clean = {k: v for k, v in (draft.context_snapshot or {}).items() if k != "evidence"}
+            if not snap_clean.get("editorial_tone"):
+                snap_clean["editorial_tone"] = "professional"
+            if not snap_clean.get("audience_persona") and available_personas:
+                snap_clean["audience_persona"] = available_personas[0]
             draft_view = {
                 "id": draft.id, "content": draft.content, "validation": draft.validation, "status": draft.status,
                 "version": draft.version, "edited": draft.edited, "provider": draft.provider, "is_demo": draft.is_demo,
@@ -711,7 +747,7 @@ class GenerationService:
                 "usage": draft.usage,
                 "image": serialize_image(current_image, draft.version),
                 # Evidence labels (e.g. "P:key_features") are values, not keys, so clients that rewrite keys keep them intact.
-                "context_snapshot": {k: v for k, v in (draft.context_snapshot or {}).items() if k != "evidence"},
+                "context_snapshot": snap_clean,
                 "evidence": [{"ref": ref, "description": text} for ref, text in ((draft.context_snapshot or {}).get("evidence") or {}).items()],
             }
         if draft:

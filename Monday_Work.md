@@ -59,3 +59,7 @@ This document summarizes the core features, integrations, bug fixes, and verific
 * Committed all verified features, fixes, regression tests, and documentation to the local working branch.
 * Successfully pushed the entire project repository to `MCF_V2` across both the primary `main` branch and `feature/final-production-audit`.
 
+### 12. Fix: Demo Mode LinkedIn Generation Quality & Leakage Prevention
+* Eliminated internal research notes, hypothesis disclaimers, and raw metadata prefixes ('For primary:', 'This problem statement is based on...', 'No verified differentiators...') from leaking into public copy.
+* Enhanced deterministic Demo Mode generation to avoid consecutive feature list repetition and ensure all four editorial tones (Professional, Conversational, Educational, Bold) produce visibly distinct, publication-ready copy.
+* Added comprehensive regression tests in `backend/tests/test_demo_quality.py` verifying character limits (< 210 chars for hooks), hashtag formatting, tone variations, persona framing, and claims grounding.

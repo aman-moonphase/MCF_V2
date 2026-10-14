@@ -422,7 +422,9 @@ async def test_persona_and_tone_controls_and_persistence(authenticated_client):
     assert res_bold.status_code == 200
     data_bold = res_bold.json()
     post_bold = data_bold["draft"]["content"]
-    assert "Ready to stop settling?" in post_bold["cta"]
+    product_name = st0["context"]["product_name"]
+    assert post_bold["cta"].startswith("See how")
+    assert product_name in post_bold["cta"]
     assert "bold tone" in post_bold["strategy_alignment"]
     assert data_bold["draft"]["context_snapshot"]["editorial_tone"] == "bold"
 
