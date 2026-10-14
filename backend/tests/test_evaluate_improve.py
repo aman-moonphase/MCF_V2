@@ -372,3 +372,187 @@ async def test_evaluation_reflects_persona_and_tone(authenticated_client):
     aud_dim = next(d for d in ev["result"]["dimensions"] if d["key"] == "audience_positioning")
     assert "Persona: \"Segment: Freelancers\"." in aud_dim["summary"]
     assert "Tone: Bold." in aud_dim["summary"]
+
+
+def test_budgetbloom_persona_and_caveat_normalization_regression():
+    """Regression test for BudgetBloom v23 persona metadata caveat leakage.
+
+    When audience_persona contains role prefixes ('Primary:') and test disclaimers
+    ('This is the intended initial test audience, not a validated customer-research finding'),
+    evaluation recommendations and feedback must normalize them:
+    - No 'Primary:' role prefix in suggestions.
+    - No internal test disclaimers in suggestions or messages.
+    - Grounding notes distinguish documented product requirement from validated customer research.
+    """
+    raw_persona = "Primary: College students managing limited budgets. This is the intended initial test audience, not a validated customer-research finding"
+    raw_target_audience = "For this test, prioritize college students managing limited budgets. Other target segments include young professionals handling their first salary and first-time budgeters. This is our intended audience selection for the test, not validated customer research."
+
+    v23_post = {
+        "hook": "Solving personal budgeting challenges requires a structured approach to daily expenses and savings goals.",
+        "body": "Tracking expenses and organizing monthly budgets gives you a clear picture of spending habits.\n\nSetting realistic savings goals helps you prepare for upcoming costs without financial stress.",
+        "cta": "How do you manage your monthly budget? Share your approach below.",
+        "hashtags": ["#PersonalFinance", "#Budgeting"],
+    }
+
+    res = run(
+        v23_post,
+        "problem",
+        audience_persona=raw_persona,
+        profile={**PROFILE, "target_audience": raw_target_audience},
+        strategy={"primary_audience": raw_target_audience, "value_proposition": "A personal budgeting tool that helps people track expenses."},
+        editorial_tone="professional",
+    )
+
+    aud_dim = dimension(res, "audience_positioning")
+    recommendations = [f for f in aud_dim["findings"] if f["type"] == "recommendation"]
+    assert len(recommendations) >= 1
+
+    rec = next(f for f in recommendations if "target persona" in f["message"])
+
+    # 1. Normalized message
+    assert "Primary:" not in rec["message"]
+    assert "not a validated customer-research finding" not in rec["message"]
+    assert rec["message"] == 'The post does not clearly address the target persona: "College students managing limited budgets".'
+
+    # 2. Natural, creator-ready suggestion without internal metadata
+    assert "primary:" not in rec["suggestion"].lower()
+    assert "intended initial test audience" not in rec["suggestion"].lower()
+    assert "not a validated customer-research finding" not in rec["suggestion"].lower()
+    assert rec["suggestion"] == "Speak to college students managing limited budgets directly, ideally in the hook."
+
+    # 3. Grounding notes explicitly distinguish documented requirement from validated customer research
+    summary = aud_dim["summary"]
+    assert "Documented product requirement (intended test audience; not validated customer research)" in summary
+    assert "Tone: " in summary
+
+
+def test_deliberately_unsupported_claim_flagged_in_non_approved_fixture():
+    """Verify that unsupported claims are flagged when the evaluator is designed to check them,
+    while honestly maintaining that statements not listed as claims are not checked."""
+    unapproved_post = {
+        "hook": "TaskNest automates your whole freelance business.",
+        "body": "It handles invoicing, client billing, and project tracking automatically.",
+        "cta": "Try it today.",
+        "hashtags": ["#TaskNest"],
+        "claims": [
+            # Deliberately unsupported claim with empty refs
+            {"text": "Guarantees $5,000 savings per month on freelance overhead", "kind": "product_fact", "refs": []},
+            # Grounded claim
+            {"text": "Task boards for every client", "kind": "product_fact", "refs": ["P:key_features"]},
+        ],
+    }
+
+    res = run(unapproved_post, "features")
+    fact_dim = dimension(res, "factual_grounding")
+
+    # 1. Unsupported claim must be flagged as a problem
+    problems = [f for f in fact_dim["findings"] if f["type"] == "problem"]
+    assert len(problems) >= 1
+    unsupported_problem = next(p for p in problems if "Guarantees $5,000 savings" in p["message"])
+    assert "Product claim without supporting evidence" in unsupported_problem["message"]
+    assert "Cite an approved profile field or source" in unsupported_problem["suggestion"]
+    assert fact_dim["status"] == "problem"
+
+    # 2. Dimension summary reflects only supported claims
+    assert "1 product claim(s) cite approved profile fields or sources." in fact_dim["summary"]
+
+    # 3. Honest unknown state is present: statements not listed as claims are not fact-checked
+    unknowns = [f for f in fact_dim["findings"] if f["type"] == "unknown"]
+    assert any("Statements not listed as claims are not fact-checked" in u["message"] for u in unknowns)
+
+    # 4. Overall evaluation outcome reflects the problem
+    assert res["overall"]["level"] in ("needs_improvement", "not_ready")
+
+
+@pytest.mark.asyncio
+async def test_evaluation_service_api_integration_persona_normalization_regression(authenticated_client, db_session):
+    """Integration test verifying persona & research caveat normalization across the live service and API.
+
+    Verifies that when audience_persona contains role prefixes ('Primary:') and test caveats
+    ('This is the intended initial test audience, not a validated customer-research finding'):
+    1. The API endpoint POST /api/projects/{id}/evaluation returns normalized findings without 'Primary:' or caveats.
+    2. The database row in content_evaluations persists normalized findings without 'Primary:' or caveats.
+    3. The recommendation suggestion is natural, concise, and creator-ready.
+    4. Dimension summary notes distinguish documented requirement from validated customer research.
+    """
+    from uuid import UUID
+    from sqlalchemy import select
+    from app.models.content_evaluation import ContentEvaluation
+
+    project_id, _, _ = await ready_project(authenticated_client)
+
+    raw_persona = "Primary: College students managing limited budgets. This is the intended initial test audience, not a validated customer-research finding"
+
+    gen_res = await authenticated_client.post(
+        f"/api/projects/{project_id}/generated-content",
+        json={
+            "pillar_index": 0,
+            "audience_persona": raw_persona,
+            "editorial_tone": "professional",
+        },
+    )
+    assert gen_res.status_code == 200
+
+    # Save an edit to version 2 that does not mention the persona, guaranteeing an Audience & Positioning recommendation
+    patch_res = await authenticated_client.patch(
+        gen_url(project_id),
+        json={
+            "hook": "A structured overview of accounting entries helps business owners stay organized.",
+            "body": "Organizing routine business spending into categories provides financial clarity and peace of mind.",
+            "cta": "How do you track your quarterly expenses? Share your thoughts.",
+            "version": 1,
+        },
+    )
+    assert patch_res.status_code == 200
+
+    # Call the actual Evaluate API endpoint for version 2
+    eval_res = await authenticated_client.post(
+        f"/api/projects/{project_id}/evaluation",
+        json={"version": 2},
+    )
+    assert eval_res.status_code == 200
+    state = eval_res.json()
+    assert state["status"] == "current"
+
+    # 1. Verify returned API result
+    ev = state["evaluation"]
+    assert ev["content_version"] == 2
+    aud_dim = next(d for d in ev["result"]["dimensions"] if d["key"] == "audience_positioning")
+
+    recs = [f for f in aud_dim["findings"] if f["type"] == "recommendation" and "target persona" in f["message"]]
+    assert len(recs) == 1
+    rec = recs[0]
+
+    assert "Primary:" not in rec["message"]
+    assert "not a validated customer-research finding" not in rec["message"]
+    assert "intended initial test audience" not in rec["message"]
+    assert rec["message"] == 'The post does not clearly address the target persona: "College students managing limited budgets".'
+
+    assert "primary:" not in rec["suggestion"].lower()
+    assert "not a validated customer-research finding" not in rec["suggestion"].lower()
+    assert "intended initial test audience" not in rec["suggestion"].lower()
+    assert rec["suggestion"] == "Speak to college students managing limited budgets directly, ideally in the hook."
+
+    assert "Documented product requirement (intended test audience; not validated customer research)" in aud_dim["summary"]
+
+    # 2. Verify persisted row in PostgreSQL/SQLite database
+    db_row = (await db_session.execute(
+        select(ContentEvaluation).where(ContentEvaluation.id == UUID(ev["id"]))
+    )).scalar_one()
+
+    db_aud_dim = next(d for d in db_row.result["dimensions"] if d["key"] == "audience_positioning")
+    db_recs = [f for f in db_aud_dim["findings"] if f["type"] == "recommendation" and "target persona" in f["message"]]
+    assert len(db_recs) == 1
+    db_rec = db_recs[0]
+
+    assert "Primary:" not in db_rec["message"]
+    assert "not a validated customer-research finding" not in db_rec["message"]
+    assert "intended initial test audience" not in db_rec["message"]
+    assert db_rec["message"] == 'The post does not clearly address the target persona: "College students managing limited budgets".'
+
+    assert "primary:" not in db_rec["suggestion"].lower()
+    assert "not a validated customer-research finding" not in db_rec["suggestion"].lower()
+    assert "intended initial test audience" not in db_rec["suggestion"].lower()
+    assert db_rec["suggestion"] == "Speak to college students managing limited budgets directly, ideally in the hook."
+
+    assert "Documented product requirement (intended test audience; not validated customer research)" in db_aud_dim["summary"]
