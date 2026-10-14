@@ -43,6 +43,23 @@ _VALUE_CUE = re.compile(
     r"\b(?:so (?:that )?\w+(?: \w+)? can|helps|lets|allows|enables|instead of|rather than)\b|, not \w+ing\b", re.I)
 _PROBLEM_CUES = re.compile(r"\b(hate|struggl\w*|wast\w*|overlook\w*|manual\w*|frustrat\w*|difficult|hard to|pain\w*|tedious|error-prone|miss\w*)\b", re.I)
 _URL = re.compile(r"(https?://[^\s,)]+|www\.[^\s,)]+)", re.I)
+_CLAUSE_MARKER = re.compile(r"\b(?:which|that|when|where|because|if|while|whose)\b", re.I)
+_ANAPHORIC_START = re.compile(r"^\s*(?:this|these|that|those|such|so|and|but|also|however)\b", re.I)
+_MONEY_TOPIC = re.compile(r"\b(?:revenue|funded|funding|investors?|profitable|pricing|price|subscriptions?|per (?:month|year)|freemium|free plan)\b", re.I)
+
+
+def _product_is_subject(prefix: str, name: Optional[str]) -> bool:
+    """True when the words before a cue ("... includes a, b") are about the PRODUCT (its name, "it", "we", "our plan"),
+    not about something else in the text ("Every HTTP request includes IP address and User-Agent")."""
+    prefix = prefix.strip().strip(",")
+    if not prefix:
+        return True
+    if _CLAUSE_MARKER.search(prefix) or len(prefix.split()) > 5:
+        return False
+    first = prefix.split()[0].lower()
+    if first in ("it", "we", "our", "the") or (name and name.split()[0].lower() in prefix.lower()):
+        return True
+    return bool(re.search(r"\b(?:plans?|app|tool|platform|product|service|software|dashboard|tier)\s*$", prefix, re.I))
 
 
 def _field_for(label: str) -> Optional[str]:
@@ -135,7 +152,13 @@ _NON_NAMES = {
 
 
 def _clean_name(cand: str) -> str:
-    return cand.strip().rstrip(".!?:;,")
+    name = cand.strip().rstrip(".!?:;,")
+    words = name.split()
+    half = len(words) // 2
+    # Web pages often repeat the title right before the first sentence ("Plausible Analytics Plausible Analytics is ...").
+    if len(words) % 2 == 0 and half and words[:half] == words[half:]:
+        name = " ".join(words[:half])
+    return name
 
 
 def _is_valid_name(cand: str) -> bool:
@@ -151,6 +174,11 @@ def _is_valid_name(cand: str) -> bool:
 
 
 def _opening_sentence(sentence: str) -> tuple[Optional[str], str, str]:
+    # A page title in front of the first sentence ("About | Plausible Analytics ...") is not part of the sentence.
+    if "|" in sentence:
+        head, tail = sentence.split("|", 1)
+        if len(head.split()) <= 4 and tail.strip():
+            sentence = tail.strip()
     label = _LABEL_PATTERN.match(sentence)
     if label:
         lbl_head = label.group(1).strip().lower()
@@ -248,7 +276,7 @@ def _prose_fields(source: str, profile: Dict[str, object], name: Optional[str]) 
     if not profile.get("key_features"):
         for x in sentences:
             m = _FEATURE_CUE.search(x)
-            if m:
+            if m and _product_is_subject(x[:m.start()], name):
                 items = [_cap(_clean(i)) for i in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(1)) if _clean(i)]
                 if len(items) >= 2:
                     profile["key_features"] = items
@@ -256,14 +284,21 @@ def _prose_fields(source: str, profile: Dict[str, object], name: Optional[str]) 
                     break
     if not profile.get("differentiators"):
         for x in sentences:
-            if x not in used and _DIFFERENTIATOR_CUE.search(x):
+            if x not in used and _DIFFERENTIATOR_CUE.search(x) and not _MONEY_TOPIC.search(x):
                 profile["differentiators"] = [_shorten(x, 200)]
+                used.add(x)
+                break
+    if not profile.get("business_model"):
+        for x in sentences:
+            if x not in used and re.search(r"\bsubscription\b|\bfreemium\b|\bone-time (?:purchase|payment)\b", x, re.I) \
+                    and re.search(r"\b(?:revenue|plans?|pricing|pay|paid|billed|charge[sd]?)\b", x, re.I) and not _CLAUSE_MARKER.search(x):
+                profile["business_model"] = _shorten(x, 200)
                 used.add(x)
                 break
     if not profile.get("value_proposition"):
         description = str(profile.get("description") or "").rstrip(".")
         for x in sentences:
-            if x not in used and x != description and _VALUE_CUE.search(x):
+            if x not in used and x != description and _VALUE_CUE.search(x) and not _ANAPHORIC_START.match(x):
                 profile["value_proposition"] = _shorten(x, 300)
                 break
 
